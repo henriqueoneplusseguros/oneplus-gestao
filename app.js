@@ -11,8 +11,8 @@ if(!cfg.SUPABASE_URL || cfg.SUPABASE_URL.indexOf("COLE_AQUI") === 0){
 }
 var sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
 
-var TEAM = ["Henrique","Alana","Agatha","Kelly","Elder"];
-var VENDEDORES = ["Henrique","Alana","Elder"];
+var TEAM = ["Henrique","Alana","Agatha","Kelly"];
+var VENDEDORES = ["Henrique","Alana"];
 var PRODUTOS = ["Saúde","Vida","Consórcio"];
 var ETAPAS = ["Qualificação","Primeiro Contato","Proposta Enviada","Negociação","Ganho","Perdido"];
 var OPERADORAS = ["Omint","Care Plus","Amil","SulAmérica","Bradesco","NotreDame","Prevent Sênior","MedSênior","Porto Seguro","São Cristóvão","Ever","Alice","Outros"];
