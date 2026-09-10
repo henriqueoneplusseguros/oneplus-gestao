@@ -143,6 +143,11 @@ fieldset legend{font-size:12px; font-weight:700; color:var(--navy); padding:0 4p
 .muted{color:var(--text-soft);}
 .suggest-box{background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:12px; font-size:13px; white-space:pre-wrap; margin-top:10px; min-height:40px;}
 
+/* ---------- Progresso de meta (funil) ---------- */
+.progress-track{width:100%; height:14px; border-radius:8px; background:rgba(172,166,152,.22); overflow:hidden;}
+.progress-fill{height:100%; background:var(--navy); border-radius:8px 0 0 8px; transition:width .3s ease;}
+@media (prefers-color-scheme: dark){ .progress-fill{background:var(--taupe);} }
+
 @media (max-width:780px){
   .app{flex-direction:column;}
   .sidebar{width:100%; flex:none; flex-direction:row; overflow-x:auto; align-items:center;}
