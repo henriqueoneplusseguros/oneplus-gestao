@@ -39,7 +39,7 @@ Você pode usar qualquer hospedagem de site estático; a mais simples é a **Net
 
 1. Acesse **netlify.com**, crie uma conta gratuita.
 2. Na tela inicial, procure a área de **"Deploy manually"** (arrastar e soltar).
-3. Arraste esta pasta inteira (`oneplus-app`, com os 5 arquivos: `index.html`, `styles.css`, `app.js`, `config.js`, `schema.sql`) para a área indicada.
+3. Arraste esta pasta inteira (com os arquivos `index.html`, `styles.css`, `app.js` e `config.js`) para a área indicada. Não precisa incluir o `schema.sql` nem o `README.md` — eles são só para a etapa de instalação, o site não usa.
 4. Em alguns segundos, a Netlify te dá um endereço (ex: `oneplus-gestao.netlify.app`). Esse é o link que você e a equipe vão usar para acessar o sistema todos os dias — pode salvar nos favoritos do navegador ou no celular.
 5. (Opcional, quando quiser) na Netlify dá para trocar esse endereço por um domínio próprio, tipo `gestao.oneplusseguros.com.br`.
 
