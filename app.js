@@ -834,7 +834,7 @@ function viewFunil(){
   var metaQtd = state.params.meta_vendas_mensal||0;
   var faltamQtd = Math.max(metaQtd - vendasQtdMes, 0);
 
-  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+state.leads.length+' oportunidade(s)</div></div><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div>';
+  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+state.leads.length+' oportunidade(s) · negócios ganhos saem do quadro e seguem na aba Implantação</div></div><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div>';
 
   var pipeTiles = '<div class="tiles">'+
     tile("Negócios ganhos — "+monthLabel(mesAtual), vendasQtdMes, metaQtd? (faltamQtd>0? "Faltam "+faltamQtd+" para a meta de "+metaQtd : "Meta de "+metaQtd+" atingida! 🎉") : "Defina a meta (quantidade) em Parâmetros")+
@@ -854,7 +854,8 @@ function viewFunil(){
       '</tbody></table></div></div></div>';
   }
 
-  var board = '<div class="kanban-board">'+ETAPAS.map(function(etapa){
+  var ETAPAS_PIPELINE = ETAPAS.filter(function(e){ return e!=="Ganho"; });
+  var board = '<div class="kanban-board">'+ETAPAS_PIPELINE.map(function(etapa){
     var items = byEtapa[etapa]||[];
     var total = items.reduce(function(s,l){return s+(l.valor_estimado||0);},0);
     return '<div class="kanban-col"><div class="kanban-col-head"><h3>'+etapa+'</h3><div class="meta">'+items.length+' · '+fmtMoney(total)+'</div></div>'+
@@ -978,7 +979,7 @@ function viewImplantacao(){
     var cli = clienteDoLead(l.id);
     var boletoEmDia = imp.boleto_mes_referencia === mesAtual;
     var pronta = !!(imp.documentos_solicitados && imp.subiu_operadora && imp.implantacao_confirmada);
-    return '<div class="card"><div class="card-head"><h2>'+escapeHtml(l.nome||l.empresa||"—")+'</h2><div class="meta">'+fmtMoney(l.valor_estimado)+(l.data_ganho? ' · ganho em '+fmtDateISO(l.data_ganho):'')+'</div></div>'+
+    return '<div class="card"><div class="card-head"><h2>'+escapeHtml(l.nome||l.empresa||"—")+'</h2><div class="meta">'+fmtMoney(l.valor_estimado)+(l.data_ganho? ' · ganho em '+fmtDateISO(l.data_ganho):'')+' · <button class="linklike" data-edit-lead="'+l.id+'">editar negócio</button></div></div>'+
       '<div class="card-body">'+
       (operadoraTag(l)? '<div style="margin-bottom:10px;">'+operadoraTag(l)+'</div>' : '')+
       '<div class="helpbox">'+(cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' : '⚠️ Cadastro do cliente ainda não foi concluído.'+' <button class="linklike" data-convert-lead="'+l.id+'">completar cadastro</button>')+'</div>'+
