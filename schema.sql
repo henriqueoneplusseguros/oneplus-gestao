@@ -192,3 +192,52 @@ alter table tarefas add column if not exists canal text;
 
 -- Meta de vendas (contagem) no funil
 alter table params add column if not exists meta_vendas_mensal int default 0;
+
+
+-- ===================================================================
+-- Migração 2026-09-10 (parte 2): tabelas que o app.js já usa
+-- (metas mensais, implantação e equipe) mas que faltavam neste
+-- schema.sql — e a coluna que liga um cliente ao lead que o originou.
+-- Todos os comandos abaixo são seguros de rodar de novo (idempotentes).
+-- ===================================================================
+
+-- Liga o cliente ao negócio do funil que deu origem a ele
+alter table clientes add column if not exists lead_id uuid references leads(id) on delete set null;
+
+-- ========== METAS MENSAIS (meta de vendas em R$, editável mês a mês) ==========
+create table if not exists metas_mensais (
+    id uuid primary key default gen_random_uuid(),
+    mes text not null unique,       -- formato "AAAA-MM"
+  valor_meta numeric(12,2) default 0,
+    criado_em timestamptz default now()
+  );
+
+-- ========== IMPLANTAÇÃO (checklist pós-fechamento de cada negócio ganho) ==========
+create table if not exists implantacoes (
+    id uuid primary key default gen_random_uuid(),
+    lead_id uuid references leads(id) on delete cascade,
+    responsavel text default 'Kelly',
+    documentos_solicitados boolean default false,
+    subiu_operadora boolean default false,
+    implantacao_confirmada boolean default false,
+    boleto_mes_referencia text,
+    observacoes text,
+    criado_por text,
+    criado_em timestamptz default now()
+  );
+
+-- ========== EQUIPE (nome ⇄ e-mail de login, usado para saber quem está logado) ==========
+create table if not exists equipe (
+    id uuid primary key default gen_random_uuid(),
+    nome text not null unique,
+    email text,
+    criado_em timestamptz default now()
+  );
+
+alter table metas_mensais enable row level security;
+alter table implantacoes enable row level security;
+alter table equipe enable row level security;
+
+create policy "auth all metas_mensais" on metas_mensais for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "auth all implantacoes" on implantacoes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "auth all equipe" on equipe for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
