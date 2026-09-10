@@ -44,7 +44,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-  clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [],
+  clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [],
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -81,6 +81,31 @@ function wireMoneyInputs(root){
       el.value = v ? moneyDisplay(v) : "";
     });
   });
+}
+/* Campo de data + hora em dois inputs nativos separados (mais fácil de usar que datetime-local). */
+function dateTimeFieldHtml(prefix, isoValue, label, opts){
+  opts = opts || {};
+  var dataVal = "", horaVal = opts.defaultHora || "";
+  if(isoValue){
+    var d = new Date(isoValue);
+    if(!isNaN(d.getTime())){
+      dataVal = d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
+      horaVal = pad2(d.getHours())+":"+pad2(d.getMinutes());
+    }
+  }
+  return '<div class="field"><label>'+label+'</label><div class="rowflex" style="flex-wrap:nowrap;">'+
+    '<input type="date" id="'+prefix+'-data" value="'+dataVal+'" style="flex:1.3;">'+
+    '<input type="time" id="'+prefix+'-hora" value="'+horaVal+'" style="flex:1;">'+
+    '</div></div>';
+}
+/* Lê os dois campos de dateTimeFieldHtml e devolve {iso, dateOnly} ou null se não preenchido. */
+function readDateTime(prefix, horaPadrao){
+  var elData = document.getElementById(prefix+"-data");
+  var elHora = document.getElementById(prefix+"-hora");
+  if(!elData || !elData.value) return null;
+  var hora = (elHora && elHora.value) ? elHora.value : (horaPadrao || "09:00");
+  var iso = new Date(elData.value+"T"+hora+":00").toISOString();
+  return {iso: iso, dateOnly: elData.value, hora: hora};
 }
 function fmtDateISO(s){ if(!s) return "—"; var p=String(s).slice(0,10).split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }
 function fmtDateTime(s){ if(!s) return "—"; var d=new Date(s); return pad2(d.getDate())+"/"+pad2(d.getMonth()+1)+"/"+d.getFullYear()+" "+pad2(d.getHours())+":"+pad2(d.getMinutes()); }
@@ -189,6 +214,25 @@ document.getElementById("btn-logout").addEventListener("click", async function()
   await sb.auth.signOut();
 });
 
+document.getElementById("btn-notif").addEventListener("click", function(e){
+  e.stopPropagation();
+  notifOpen = !notifOpen;
+  renderNotifBell();
+});
+document.addEventListener("click", function(e){
+  if(!notifOpen) return;
+  var panel = document.getElementById("notif-panel");
+  var btn = document.getElementById("btn-notif");
+  if(panel && !panel.contains(e.target) && btn && !btn.contains(e.target)){
+    notifOpen = false;
+    renderNotifBell();
+  }
+});
+document.getElementById("notif-panel").addEventListener("click", function(e){
+  var btn = e.target.closest("[data-concluir-notif]");
+  if(btn){ dbUpdate("tarefas", btn.getAttribute("data-concluir-notif"), {status:"Concluída"}); }
+});
+
 sb.auth.onAuthStateChange(function(event, session){
   state.session = session;
   if(event === "PASSWORD_RECOVERY"){
@@ -263,7 +307,8 @@ async function loadAll(){
       sb.from("interacoes").select("*").order("data", {ascending:false}),
       sb.from("params").select("*").eq("id",1).single(),
       sb.from("metas_mensais").select("*"),
-      sb.from("implantacoes").select("*")
+      sb.from("implantacoes").select("*"),
+      sb.from("equipe").select("*")
     ]);
     var errs = results.filter(function(r){return r.error;});
     if(errs.length){ console.error(errs); toast("Alguns dados não carregaram — veja o console."); }
@@ -277,6 +322,7 @@ async function loadAll(){
     if(results[7].data) state.params = results[7].data;
     state.metas_mensais = results[8].data || [];
     state.implantacoes = results[9].data || [];
+    state.equipe = results[10].data || [];
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
   render();
@@ -291,7 +337,8 @@ async function reload(table){
     leads: function(){ return sb.from("leads").select("*").order("criado_em",{ascending:false}); },
     interacoes: function(){ return sb.from("interacoes").select("*").order("data",{ascending:false}); },
     metas_mensais: function(){ return sb.from("metas_mensais").select("*"); },
-    implantacoes: function(){ return sb.from("implantacoes").select("*"); }
+    implantacoes: function(){ return sb.from("implantacoes").select("*"); },
+    equipe: function(){ return sb.from("equipe").select("*"); }
   };
   var r = await map[table]();
   if(r.error){ console.error(r.error); toast("Erro ao atualizar "+table); return; }
@@ -300,6 +347,47 @@ async function reload(table){
 }
 
 function currentUser(){ return (state.session && state.session.user && state.session.user.email) || "—"; }
+/* Descobre o nome (TEAM) da pessoa logada a partir do e-mail, usando a tabela "equipe". */
+function currentUserName(){
+  var email = currentUser().toLowerCase();
+  var e = state.equipe.filter(function(x){ return (x.email||"").toLowerCase()===email; })[0];
+  return e ? e.nome : null;
+}
+function emailDoResponsavel(nome){
+  var e = state.equipe.filter(function(x){ return x.nome===nome; })[0];
+  return e ? e.email : null;
+}
+/* Tarefas do usuário logado que já venceram ou vencem hoje e ainda não foram concluídas. */
+function minhasTarefasPendentes(){
+  var nome = currentUserName();
+  if(!nome) return [];
+  var hoje = todayISO();
+  return state.tarefas.filter(function(t){
+    if(t.responsavel!==nome || t.status==="Concluída") return false;
+    if(t.vencimento_em) return t.vencimento_em <= new Date().toISOString();
+    return t.data_vencimento && t.data_vencimento<=hoje;
+  }).sort(function(a,b){ return (a.vencimento_em||a.data_vencimento||"")<(b.vencimento_em||b.data_vencimento||"")?-1:1; });
+}
+var notifOpen = false;
+function renderNotifBell(){
+  var pend = minhasTarefasPendentes();
+  var badge = document.getElementById("notif-badge");
+  var btn = document.getElementById("btn-notif");
+  if(!btn) return;
+  if(pend.length){ badge.textContent = pend.length; badge.style.display = "inline-flex"; }
+  else { badge.style.display = "none"; }
+  var panel = document.getElementById("notif-panel");
+  if(notifOpen){
+    panel.style.display = "block";
+    panel.innerHTML = pend.length===0 ? '<div class="empty" style="padding:14px;">Nenhuma tarefa pendente para você. 🎉</div>' :
+      pend.map(function(t){
+        var quando = t.vencimento_em ? fmtDateTime(t.vencimento_em) : fmtDateISO(t.data_vencimento);
+        return '<div class="notif-item"><div class="notif-item-title">'+escapeHtml(t.titulo)+'</div><div class="notif-item-meta">'+quando+'</div><button class="linklike" data-concluir-notif="'+t.id+'">concluir</button></div>';
+      }).join("");
+  } else {
+    panel.style.display = "none";
+  }
+}
 
 async function dbInsert(table, data, reloadAlso){
   data.criado_por = currentUser();
@@ -369,6 +457,7 @@ function renderNav(){
 
 function render(){
   renderNav();
+  renderNotifBell();
   var main = document.getElementById("main");
   if(state.loading){ main.innerHTML = '<div class="empty">Carregando…</div>'; return; }
   if(state.tab==="painel") main.innerHTML = viewPainel();
@@ -889,23 +978,23 @@ function viewFunil(){
 }
 function leadTarefaFormHtml(){
   return '<div class="field"><label>O que fazer</label><input id="lt-titulo" placeholder="ex: Ligar para o cliente"></div>'+
-  '<div class="field row2"><div class="field"><label>Canal</label><select id="lt-canal">'+CANAIS_TAREFA.map(function(c){return '<option>'+c+'</option>';}).join("")+'</select></div><div class="field"><label>Data e hora</label><input type="datetime-local" id="lt-venc"></div></div>'+
+  '<div class="field row2"><div class="field"><label>Canal</label><select id="lt-canal">'+CANAIS_TAREFA.map(function(c){return '<option>'+c+'</option>';}).join("")+'</select></div>'+dateTimeFieldHtml("lt-venc", null, "Data e hora")+'</div>'+
   '<div class="field"><label>Observação (opcional)</label><textarea id="lt-desc"></textarea></div>';
 }
 function openLeadTarefaModal(lead){
   openModal("Agendar tarefa — "+(lead.nome||lead.empresa||"lead"), leadTarefaFormHtml(), function(closeFn){
     var titulo = document.getElementById("lt-titulo").value.trim();
-    var venc = document.getElementById("lt-venc").value;
+    var venc = readDateTime("lt-venc");
     if(!titulo){ toast("Descreva a tarefa."); return; }
-    if(!venc){ toast("Escolha data e hora."); return; }
+    if(!venc){ toast("Escolha a data."); return; }
     var data = {
       tipo: "Tarefa",
       titulo: titulo,
       responsavel: lead.vendedor || currentUser(),
       lead_id: lead.id,
       canal: document.getElementById("lt-canal").value,
-      vencimento_em: new Date(venc).toISOString(),
-      data_vencimento: venc.slice(0,10),
+      vencimento_em: venc.iso,
+      data_vencimento: venc.dateOnly,
       status: "Pendente",
       descricao: document.getElementById("lt-desc").value.trim()
     };
@@ -1017,9 +1106,10 @@ function viewTarefas(){
     var lead = !cli && t.lead_id ? state.leads.filter(function(l){return l.id===t.lead_id;})[0] : null;
     var quem = cli ? escapeHtml(clienteLabel(cli)) : (lead ? escapeHtml(lead.nome||lead.empresa||"—")+' <span class="tag">Funil</span>' : '—');
     var atrasada = t.status!=="Concluída" && t.data_vencimento && t.data_vencimento<hoje;
+    var quando = t.vencimento_em ? fmtDateTime(t.vencimento_em) : fmtDateISO(t.data_vencimento);
     return '<tr><td><span class="tag">'+t.tipo+'</span></td><td>'+escapeHtml(t.titulo)+(t.beneficiario_nome?' <span class="muted">('+escapeHtml(t.beneficiario_nome)+')</span>':'')+'</td>'+
     '<td>'+quem+'</td><td>'+escapeHtml(t.responsavel||"—")+'</td>'+
-    '<td>'+(atrasada?'<span class="pill pill-bad">'+fmtDateISO(t.data_vencimento)+'</span>':fmtDateISO(t.data_vencimento))+'</td>'+
+    '<td>'+(atrasada?'<span class="pill pill-bad">'+quando+'</span>':quando)+'</td>'+
     '<td><select class="tarefa-status" data-tarefa="'+t.id+'">'+STATUS_TAREFA.map(function(s){return '<option'+(t.status===s?' selected':'')+'>'+s+'</option>';}).join("")+'</select></td>'+
     '<td><button class="linklike" data-edit-tarefa="'+t.id+'">editar</button></td></tr>';
   }).join(""))+
@@ -1030,18 +1120,20 @@ function tarefaFormHtml(t){
   return '<div class="field row2"><div class="field"><label>Tipo</label><select id="t-tipo">'+TIPOS_TAREFA.map(function(x){return '<option'+(t.tipo===x?' selected':'')+'>'+x+'</option>';}).join("")+'</select></div><div class="field"><label>Responsável</label><select id="t-resp">'+TEAM.map(function(x){return '<option'+(t.responsavel===x?' selected':'')+'>'+x+'</option>';}).join("")+'</select></div></div>'+
   '<div class="field"><label>Título</label><input id="t-titulo" value="'+escapeHtml(t.titulo||"")+'"></div>'+
   '<div class="field row2"><div class="field"><label>Cliente (opcional)</label><select id="t-cliente"><option value="">—</option>'+state.clientes.map(function(c){return '<option value="'+c.id+'"'+(t.cliente_id===c.id?' selected':'')+'>'+escapeHtml(clienteLabel(c))+'</option>';}).join("")+'</select></div><div class="field"><label>Beneficiário (opcional)</label><input id="t-benef" value="'+escapeHtml(t.beneficiario_nome||"")+'"></div></div>'+
-  '<div class="field row2"><div class="field"><label>Vencimento</label><input type="date" id="t-venc" value="'+(t.data_vencimento||"")+'"></div><div class="field"><label>Status</label><select id="t-status">'+STATUS_TAREFA.map(function(x){return '<option'+(t.status===x?' selected':'')+'>'+x+'</option>';}).join("")+'</select></div></div>'+
+  '<div class="field row3">'+dateTimeFieldHtml("t-venc", t.vencimento_em || (t.data_vencimento? t.data_vencimento+"T09:00:00" : null), "Vencimento")+'<div class="field"><label>Status</label><select id="t-status">'+STATUS_TAREFA.map(function(x){return '<option'+(t.status===x?' selected':'')+'>'+x+'</option>';}).join("")+'</select></div></div>'+
   '<div class="field"><label>Descrição</label><textarea id="t-desc">'+escapeHtml(t.descricao||"")+'</textarea></div>';
 }
 function openTarefaModal(existing){
   openModal(existing?"Editar tarefa":"Nova tarefa", tarefaFormHtml(existing), function(closeFn){
+    var venc = readDateTime("t-venc");
     var data = {
       tipo: document.getElementById("t-tipo").value,
       responsavel: document.getElementById("t-resp").value,
       titulo: document.getElementById("t-titulo").value.trim(),
       cliente_id: document.getElementById("t-cliente").value || null,
       beneficiario_nome: document.getElementById("t-benef").value.trim(),
-      data_vencimento: document.getElementById("t-venc").value || null,
+      data_vencimento: venc ? venc.dateOnly : null,
+      vencimento_em: venc ? venc.iso : null,
       status: document.getElementById("t-status").value,
       descricao: document.getElementById("t-desc").value.trim()
     };
@@ -1111,22 +1203,21 @@ function viewReembolsosList(){
 }
 function agendFormHtml(a){
   a=a||{tipo:"Consulta",status:"Agendado"};
-  var dtLocal = a.data_hora ? a.data_hora.slice(0,16) : "";
   return '<div class="field row2"><div class="field"><label>Cliente</label><select id="a-cliente">'+state.clientes.map(function(c){return '<option value="'+c.id+'"'+(a.cliente_id===c.id?' selected':'')+'>'+escapeHtml(clienteLabel(c))+'</option>';}).join("")+'</select></div><div class="field"><label>Beneficiário</label><input id="a-benef" value="'+escapeHtml(a.beneficiario_nome||"")+'"></div></div>'+
   '<div class="field row2"><div class="field"><label>Tipo</label><select id="a-tipo">'+TIPOS_AGENDAMENTO.map(function(t){return '<option'+(a.tipo===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div><div class="field"><label>Especialidade</label><input id="a-esp" value="'+escapeHtml(a.especialidade||"")+'"></div></div>'+
-  '<div class="field row2"><div class="field"><label>Data e hora</label><input type="datetime-local" id="a-data" value="'+dtLocal+'"></div><div class="field"><label>Local (hospital, laboratório, médico)</label><input id="a-local" value="'+escapeHtml(a.local||"")+'"><div class="muted" style="font-size:11.5px;">Salve e depois use o link "📍 mapa" na lista para abrir o local no Google Maps.</div></div></div>'+
+  '<div class="field row2">'+dateTimeFieldHtml("a-venc", a.data_hora, "Data e hora")+'<div class="field"><label>Local (hospital, laboratório, médico)</label><input id="a-local" value="'+escapeHtml(a.local||"")+'"><div class="muted" style="font-size:11.5px;">Salve e depois use o link "📍 mapa" na lista para abrir o local no Google Maps.</div></div></div>'+
   '<div class="field"><label>Status</label><select id="a-status">'+STATUS_AGENDAMENTO.map(function(s){return '<option'+(a.status===s?' selected':'')+'>'+s+'</option>';}).join("")+'</select></div>'+
   '<div class="field"><label>Observações</label><textarea id="a-obs">'+escapeHtml(a.observacoes||"")+'</textarea></div>';
 }
 function openAgendModal(existing){
   openModal(existing?"Editar agendamento":"Novo agendamento", agendFormHtml(existing), function(closeFn){
-    var dt = document.getElementById("a-data").value;
+    var venc = readDateTime("a-venc");
     var data = {
       cliente_id: document.getElementById("a-cliente").value || null,
       beneficiario_nome: document.getElementById("a-benef").value.trim(),
       tipo: document.getElementById("a-tipo").value,
       especialidade: document.getElementById("a-esp").value.trim(),
-      data_hora: dt ? new Date(dt).toISOString() : null,
+      data_hora: venc ? venc.iso : null,
       local: document.getElementById("a-local").value.trim(),
       status: document.getElementById("a-status").value,
       observacoes: document.getElementById("a-obs").value.trim()
@@ -1222,8 +1313,13 @@ function viewParametros(){
     '<div class="field row2"><div class="field"><label>Meta de vendas mensal (quantidade)</label><input type="number" step="1" id="p-meta-vendas" value="'+(p.meta_vendas_mensal||0)+'"></div><div class="field"></div></div>'+
     '<button class="btn btn-primary" id="btn-salvar-params" style="width:fit-content;">Salvar</button>'+
   '</div></div>'+
-  '<div class="card"><div class="card-head"><h2>Equipe com acesso</h2></div><div class="card-body"><div class="helpbox">Para adicionar ou remover o acesso de alguém da equipe, use o painel do Supabase: Authentication &gt; Users.</div>'+
-  '<div class="tablewrap"><table class="grid"><thead><tr><th>Nome</th></tr></thead><tbody>'+TEAM.map(function(t){return '<tr><td>'+t+'</td></tr>';}).join("")+'</tbody></table></div></div></div>';
+  '<div class="card"><div class="card-head"><h2>Equipe com acesso</h2></div><div class="card-body"><div class="helpbox">Para adicionar ou remover o acesso de alguém da equipe, use o painel do Supabase: Authentication &gt; Users. O e-mail cadastrado aqui é usado para saber "quem está logado" (para filtrar minhas tarefas e o sino de notificação) e para onde mandar o e-mail de tarefa vencendo.</div>'+
+  '<div class="tablewrap"><table class="grid"><thead><tr><th>Nome</th><th>E-mail (notificações)</th><th></th></tr></thead><tbody>'+
+  TEAM.map(function(t){
+    var e = state.equipe.filter(function(x){return x.nome===t;})[0];
+    return '<tr><td>'+t+'</td><td><input type="email" class="equipe-email" data-nome="'+t+'" value="'+escapeHtml(e?e.email:"")+'" placeholder="nome@oneplusseguros.com.br" style="max-width:280px;"></td><td><button class="linklike" data-salvar-equipe="'+t+'">salvar</button></td></tr>';
+  }).join("")+
+  '</tbody></table></div></div></div>';
 }
 
 /* ================= WIRE ================= */
@@ -1358,6 +1454,17 @@ function wireActions(){
     out.textContent = tpl.replace(/\{nome\}/g, nome);
   };
 
+  Array.prototype.forEach.call(document.querySelectorAll("[data-salvar-equipe]"), function(btn){
+    btn.onclick = function(){
+      var nome = btn.getAttribute("data-salvar-equipe");
+      var input = document.querySelector('.equipe-email[data-nome="'+nome+'"]');
+      var email = input.value.trim();
+      if(!email){ toast("Informe um e-mail."); return; }
+      var existing = state.equipe.filter(function(x){ return x.nome===nome; })[0];
+      if(existing) dbUpdate("equipe", existing.id, {email:email});
+      else dbInsert("equipe", {nome:nome, email:email});
+    };
+  });
   var btnSalvarParams = document.getElementById("btn-salvar-params");
   if(btnSalvarParams) btnSalvarParams.onclick=function(){
     saveParams({
