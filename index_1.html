@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>One Plus Gestão</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-mark">1+</div>
+    <h1>Entrar</h1>
+    <div class="sub">Acesse o sistema de gestão da One Plus.</div>
+    <form id="login-form">
+      <div class="field" style="margin-bottom:12px;">
+        <label>E-mail</label>
+        <input type="email" id="login-email" required autocomplete="username">
+      </div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>Senha</label>
+        <input type="password" id="login-password" required autocomplete="current-password">
+      </div>
+      <button class="btn btn-primary" type="submit" id="login-btn" style="width:100%;">Entrar</button>
+      <div class="login-error" id="login-error"></div>
+    </form>
+  </div>
+</div>
+
+<div id="app-shell" class="app" style="display:none;">
+  <div class="sidebar">
+    <div class="brand">
+      <div class="mark">1+</div>
+      <div>
+        <div class="name">One Plus</div>
+        <div class="sub">Gestão</div>
+      </div>
+    </div>
+    <nav id="nav"></nav>
+    <div class="whoami">
+      <div class="email" id="current-email"></div>
+      <button class="btn-logout" id="btn-logout">Sair</button>
+    </div>
+  </div>
+  <div class="main">
+    <div id="main"></div>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
