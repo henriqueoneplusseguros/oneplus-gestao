@@ -14,7 +14,8 @@ var sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
 var TEAM = ["Henrique","Alana","Agatha","Kelly","Elder"];
 var VENDEDORES = ["Henrique","Alana","Elder"];
 var PRODUTOS = ["Saúde","Vida","Consórcio"];
-var ETAPAS = ["Qualificação","Primeiro Contato","Proposta Enviada","Negociação","Fechado","Perdido"];
+var ETAPAS = ["Qualificação","Primeiro Contato","Proposta Enviada","Negociação","Ganho","Perdido"];
+var OPERADORAS = ["Omint","Care Plus","Amil","SulAmérica","Bradesco","NotreDame","Prevent Sênior","MedSênior","Porto Seguro","São Cristóvão","Ever","Alice","Outros"];
 var CANAIS = ["WhatsApp","Ligação","E-mail","Presencial"];
 var CANAIS_TAREFA = ["Ligar","WhatsApp","E-mail","Outro"];
 var TIPOS_TITULARIDADE = ["Dependente","Titular adicional"];
@@ -43,7 +44,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-  clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [],
+  clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [],
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -57,6 +58,30 @@ function monthKeyAdd(mk,n){ var p=mk.split("-"); var y=parseInt(p[0]), m=parseIn
 function monthLabel(mk){ var p=mk.split("-"); var names=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]; return names[parseInt(p[1])-1]+"/"+p[0]; }
 function fmtMoney(v){ v = v||0; var neg = v<0; v=Math.abs(v); var s = v.toFixed(2).replace(".",","); var parts=s.split(","); parts[0]=parts[0].replace(/\B(?=(\d{3})+(?!\d))/g,"."); return (neg?"-":"")+"R$ "+parts[0]+","+parts[1]; }
 function fmtPct(v){ return (v*100).toFixed(1).replace(".",",")+"%"; }
+/* Aceita valores digitados no formato brasileiro (1.876,29 ou 1876,29 ou 1876.29) e devolve number. */
+function parseMoneyBR(str){
+  if(str==null) return 0;
+  str = String(str).trim();
+  if(!str) return 0;
+  str = str.replace(/[^\d,.\-]/g,"");
+  if(str.indexOf(",")>=0){ str = str.replace(/\./g,"").replace(",","."); }
+  var v = parseFloat(str);
+  return isNaN(v) ? 0 : v;
+}
+function moneyDisplay(v){ if(v==null || v==="" || isNaN(v)) return ""; return fmtMoney(v).replace("R$ ",""); }
+/* Campo de dinheiro em texto (aceita vírgula), formatado ao perder o foco. */
+function moneyFieldHtml(id, value, label, extraAttrs){
+  return '<div class="field"><label>'+label+'</label><input type="text" inputmode="decimal" class="money-input" id="'+id+'" value="'+escapeHtml(moneyDisplay(value))+'" placeholder="0,00" '+(extraAttrs||"")+'></div>';
+}
+function wireMoneyInputs(root){
+  var scope = root || document;
+  Array.prototype.forEach.call(scope.querySelectorAll(".money-input"), function(el){
+    el.addEventListener("blur", function(){
+      var v = parseMoneyBR(el.value);
+      el.value = v ? moneyDisplay(v) : "";
+    });
+  });
+}
 function fmtDateISO(s){ if(!s) return "—"; var p=String(s).slice(0,10).split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }
 function fmtDateTime(s){ if(!s) return "—"; var d=new Date(s); return pad2(d.getDate())+"/"+pad2(d.getMonth()+1)+"/"+d.getFullYear()+" "+pad2(d.getHours())+":"+pad2(d.getMinutes()); }
 function todayMonthKey(){ return monthKeyFromISO(todayISO()); }
@@ -236,7 +261,9 @@ async function loadAll(){
       sb.from("agendamentos").select("*").order("data_hora"),
       sb.from("leads").select("*").order("criado_em", {ascending:false}),
       sb.from("interacoes").select("*").order("data", {ascending:false}),
-      sb.from("params").select("*").eq("id",1).single()
+      sb.from("params").select("*").eq("id",1).single(),
+      sb.from("metas_mensais").select("*"),
+      sb.from("implantacoes").select("*")
     ]);
     var errs = results.filter(function(r){return r.error;});
     if(errs.length){ console.error(errs); toast("Alguns dados não carregaram — veja o console."); }
@@ -248,6 +275,8 @@ async function loadAll(){
     state.leads = results[5].data || [];
     state.interacoes = results[6].data || [];
     if(results[7].data) state.params = results[7].data;
+    state.metas_mensais = results[8].data || [];
+    state.implantacoes = results[9].data || [];
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
   render();
@@ -260,7 +289,9 @@ async function reload(table){
     reembolsos: function(){ return sb.from("reembolsos").select("*").order("data_solicitacao",{ascending:false}); },
     agendamentos: function(){ return sb.from("agendamentos").select("*").order("data_hora"); },
     leads: function(){ return sb.from("leads").select("*").order("criado_em",{ascending:false}); },
-    interacoes: function(){ return sb.from("interacoes").select("*").order("data",{ascending:false}); }
+    interacoes: function(){ return sb.from("interacoes").select("*").order("data",{ascending:false}); },
+    metas_mensais: function(){ return sb.from("metas_mensais").select("*"); },
+    implantacoes: function(){ return sb.from("implantacoes").select("*"); }
   };
   var r = await map[table]();
   if(r.error){ console.error(r.error); toast("Erro ao atualizar "+table); return; }
@@ -308,6 +339,7 @@ var NAV = [
   {id:"painel", label:"Painel", icon:"grid"},
   {id:"clientes", label:"Clientes", icon:"users"},
   {id:"funil", label:"Funil Comercial", icon:"filter"},
+  {id:"implantacao", label:"Implantação", icon:"flag"},
   {id:"tarefas", label:"Tarefas", icon:"check"},
   {id:"agenda", label:"Agenda", icon:"calendar"},
   {id:"atendimentos", label:"Atendimentos", icon:"heart"},
@@ -322,7 +354,8 @@ var ICONS = {
   calendar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
   heart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20s-7-4.5-9.3-9A5 5 0 0 1 12 6a5 5 0 0 1 9.3 5c-2.3 4.5-9.3 9-9.3 9z"/></svg>',
   message:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H8l-4 4z"/></svg>',
-  sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h9M17 6h3M4 12h3M9 12h11M4 18h13M20 18h0"/><circle cx="14" cy="6" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>'
+  sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h9M17 6h3M4 12h3M9 12h11M4 18h13M20 18h0"/><circle cx="14" cy="6" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
+  flag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4"/><path d="M5 4h13l-3 4.5L18 13H5"/></svg>'
 };
 function renderNav(){
   var nav = document.getElementById("nav");
@@ -341,6 +374,7 @@ function render(){
   if(state.tab==="painel") main.innerHTML = viewPainel();
   else if(state.tab==="clientes") main.innerHTML = viewClientes();
   else if(state.tab==="funil") main.innerHTML = viewFunil();
+  else if(state.tab==="implantacao") main.innerHTML = viewImplantacao();
   else if(state.tab==="tarefas") main.innerHTML = viewTarefas();
   else if(state.tab==="agenda") main.innerHTML = viewAgenda();
   else if(state.tab==="atendimentos") main.innerHTML = viewAtendimentos();
@@ -365,6 +399,7 @@ function openModal(title, bodyHtml, onSave, saveLabel){
   document.getElementById("modal-cancel").onclick = close;
   document.getElementById("modal-backdrop").addEventListener("click", function(e){ if(e.target.id==="modal-backdrop") close(); });
   document.getElementById("modal-save").onclick = function(){ onSave(close); };
+  wireMoneyInputs(document.getElementById("modal-body"));
   return close;
 }
 
@@ -374,7 +409,7 @@ function viewPainel(){
   var mesAtual = todayMonthKey();
   var fatMes = faturamentoDoMes(mesAtual, state.clientes, state.params);
   var meta = state.params.meta_mensal_padrao||0;
-  var funilAberto = state.leads.filter(function(l){ return l.etapa!=="Fechado" && l.etapa!=="Perdido"; });
+  var funilAberto = state.leads.filter(function(l){ return l.etapa!=="Ganho" && l.etapa!=="Perdido"; });
   var valorFunil = funilAberto.reduce(function(s,l){ return s+(l.valor_estimado||0); },0);
   var hoje = todayISO();
   var revisoes = ativos.map(function(c){ return {c:c,r:nextRevisao(c)}; }).filter(function(x){ return x.r && daysBetween(hoje,x.r.date)<=60; });
@@ -466,7 +501,7 @@ function clienteFormHtml(c, deps){
   '<div class="field row3"><div class="field"><label>Produto</label><select id="f-produto">'+PRODUTOS.map(function(p){return '<option'+(c.produto===p?' selected':'')+'>'+p+'</option>';}).join("")+'</select></div><div class="field"><label>Nome do plano</label><input id="f-plano" value="'+escapeHtml(c.plano_nome||"")+'" placeholder="ex: Amil Black"></div><div class="field"><label>Vendedor(a)</label><select id="f-vendedor">'+VENDEDORES.map(function(v){return '<option'+(c.vendedor===v?' selected':'')+'>'+v+'</option>';}).join("")+'</select></div></div>'+
   '<div class="field row3"><div class="field"><label>Data de inclusão</label><input type="date" id="f-inclusao" value="'+(c.data_inclusao||"")+'"></div><div class="field"><label>Vigência (início)</label><input type="date" id="f-vig-inicio" value="'+(c.vigencia_inicio||"")+'"></div><div class="field"><label>Vigência (duração)</label><select id="f-vig-meses"><option value="12"'+((c.duracao_contrato_meses||12)==12?' selected':'')+'>12 meses</option><option value="24"'+((c.duracao_contrato_meses||12)==24?' selected':'')+'>24 meses</option></select></div></div>'+
   '<div class="field row2"><div class="field"><label>Vigência (fim, calculado)</label><input type="date" id="f-vig-fim" value="'+(c.vigencia_fim||"")+'"></div><div class="field"><label>&nbsp;</label><div class="muted" style="font-size:11.5px;padding-top:8px;">Calculado a partir do início + duração — pode ajustar manualmente se precisar.</div></div></div>'+
-  '<div class="field row3"><div class="field"><label>Valor por beneficiário (R$)</label><input type="number" step="0.01" id="f-valor-benef" value="'+(c.valor_por_beneficiario||"")+'"></div><div class="field"><label>Valor do contrato total (R$)</label><input type="number" step="0.01" id="f-valor-total" value="'+(c.valor_contrato_total||"")+'"></div><div class="field"><label>Bônus parcela 4 (R$, opcional)</label><input type="number" step="0.01" id="f-bonus" value="'+(c.bonus_parcela4||0)+'"></div></div>'+
+  '<div class="field row3">'+moneyFieldHtml("f-valor-benef", c.valor_por_beneficiario, "Valor por beneficiário (R$)")+moneyFieldHtml("f-valor-total", c.valor_contrato_total, "Valor do contrato total (R$)")+moneyFieldHtml("f-bonus", c.bonus_parcela4||0, "Bônus parcela 4 (R$, opcional)")+'</div>'+
   '<div class="field row3"><div class="field"><label>Data de fechamento (p/ comissão)</label><input type="date" id="f-fechamento" value="'+(c.data_fechamento||c.data_inclusao||"")+'"></div><div class="field"><label>Última revisão de plano</label><input type="date" id="f-revisao" value="'+(c.ultima_revisao||"")+'"></div><div class="field"><label>Status</label><select id="f-status"><option'+(c.status==="Ativo"?' selected':'')+'>Ativo</option><option'+(c.status==="Cancelado"?' selected':'')+'>Cancelado</option></select></div></div>'+
   '<div class="field row3"><div class="field"><label>Reajuste (índice %)</label><input type="number" step="0.01" id="f-reajuste-pct" value="'+(c.percentual_reajuste||"")+'" placeholder="ex: 8,5"></div><div class="field"><label>&nbsp;</label><button type="button" class="btn btn-ghost" id="btn-aplicar-reajuste">Aplicar reajuste ao valor do contrato</button></div><div class="field"><label>Último reajuste em</label><input type="date" id="f-reajuste-data" value="'+(c.data_ultimo_reajuste||"")+'" readonly></div></div>'+
   '</fieldset>'+
@@ -485,7 +520,7 @@ function depRowHtml(d,i){
     '<div class="field"><label>CPF</label><input class="dep-cpf" value="'+escapeHtml(d.cpf||"")+'"></div>'+
     '<div class="field"><label>Nascimento</label><input type="date" class="dep-nasc" value="'+(d.data_nascimento||"")+'"></div>'+
     '<div class="field"><label>Tipo</label><select class="dep-tipo">'+TIPOS_TITULARIDADE.map(function(t){return '<option'+((d.tipo||"Dependente")===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div>'+
-    '<div class="field"><label>Valor benefíc. (R$)</label><input type="number" step="0.01" class="dep-valor" value="'+(d.valor_beneficiario||"")+'"></div>'+
+    '<div class="field"><label>Valor benefíc. (R$)</label><input type="text" inputmode="decimal" class="money-input dep-valor" value="'+escapeHtml(moneyDisplay(d.valor_beneficiario))+'" placeholder="0,00"></div>'+
     '<button type="button" class="iconbtn" data-remove-dep="'+i+'">✕</button>'+
   '</div>';
 }
@@ -555,9 +590,9 @@ function wireClienteFormExtra(){
       var pct = parseFloat(document.getElementById("f-reajuste-pct").value);
       if(!pct){ toast("Informe o percentual de reajuste."); return; }
       var elValor = document.getElementById("f-valor-total");
-      var atual = parseFloat(elValor.value)||0;
+      var atual = parseMoneyBR(elValor.value);
       var novo = atual * (1 + pct/100);
-      elValor.value = novo.toFixed(2);
+      elValor.value = moneyDisplay(novo);
       document.getElementById("f-reajuste-data").value = todayISO();
       toast("Reajuste de "+pct+"% aplicado ao valor do contrato.");
     };
@@ -569,7 +604,7 @@ function readClienteForm(){
     var nome = row.querySelector(".dep-nome").value.trim();
     var cpf = row.querySelector(".dep-cpf").value.trim();
     var nasc = row.querySelector(".dep-nasc").value;
-    var valor = parseFloat(row.querySelector(".dep-valor").value)||0;
+    var valor = parseMoneyBR(row.querySelector(".dep-valor").value);
     var tipoEl = row.querySelector(".dep-tipo");
     var tipo = tipoEl ? tipoEl.value : "Dependente";
     if(nome||cpf||nasc) deps.push({nome:nome, cpf:cpf, data_nascimento:nasc||null, valor_beneficiario:valor, tipo:tipo});
@@ -598,9 +633,9 @@ function readClienteForm(){
       vigencia_inicio: document.getElementById("f-vig-inicio").value || null,
       vigencia_fim: document.getElementById("f-vig-fim").value || null,
       duracao_contrato_meses: parseInt(document.getElementById("f-vig-meses").value,10)||12,
-      valor_por_beneficiario: parseFloat(document.getElementById("f-valor-benef").value)||0,
-      valor_contrato_total: parseFloat(document.getElementById("f-valor-total").value)||0,
-      bonus_parcela4: parseFloat(document.getElementById("f-bonus").value)||0,
+      valor_por_beneficiario: parseMoneyBR(document.getElementById("f-valor-benef").value),
+      valor_contrato_total: parseMoneyBR(document.getElementById("f-valor-total").value),
+      bonus_parcela4: parseMoneyBR(document.getElementById("f-bonus").value),
       data_fechamento: document.getElementById("f-fechamento").value || null,
       ultima_revisao: document.getElementById("f-revisao").value || null,
       status: document.getElementById("f-status").value,
@@ -620,12 +655,14 @@ function readClienteForm(){
   };
 }
 function openClienteModal(existing){
-  var deps = existing? depsOf(existing.id) : [];
-  openModal(existing?"Editar cliente":"Novo cliente", clienteFormHtml(existing, deps), async function(closeFn){
+  var isEdit = !!(existing && existing.id);
+  var deps = isEdit? depsOf(existing.id) : [];
+  openModal(isEdit?"Editar cliente":"Novo cliente", clienteFormHtml(existing, deps), async function(closeFn){
     var parsed = readClienteForm();
+    if(existing && existing.lead_id) parsed.data.lead_id = existing.lead_id;
     if(!parsed.data.titular_nome && !parsed.data.razao_social){ toast("Informe o nome do titular ou a razão social."); return; }
     var clienteId;
-    if(existing){
+    if(isEdit){
       var ok = await dbUpdate("clientes", existing.id, parsed.data);
       if(!ok) return;
       clienteId = existing.id;
@@ -732,9 +769,57 @@ function tarefasDoLead(leadId){
   return state.tarefas.filter(function(t){ return t.lead_id===leadId; })
     .sort(function(a,b){ return (a.vencimento_em||"")<(b.vencimento_em||"")?-1:1; });
 }
-function proximaTarefaLead(leadId){
-  var abertas = tarefasDoLead(leadId).filter(function(t){ return t.status!=="Concluída"; });
-  return abertas.length ? abertas[0] : null;
+function tarefasAbertasDoLead(leadId){
+  return tarefasDoLead(leadId).filter(function(t){ return t.status!=="Concluída"; });
+}
+/* ---- meta de vendas mensal (definida manualmente, mês a mês) ---- */
+function metaValorDoMes(mk){
+  var m = state.metas_mensais.filter(function(x){ return x.mes===mk; })[0];
+  return m ? (m.valor_meta||0) : 0;
+}
+function leadsGanhosDoMes(mk){
+  return state.leads.filter(function(l){ return l.etapa==="Ganho" && l.data_ganho && monthKeyFromISO(l.data_ganho)===mk; });
+}
+function vendasValorDoMes(mk){ return leadsGanhosDoMes(mk).reduce(function(s,l){ return s+(l.valor_estimado||0); },0); }
+function vendasQtdDoMes(mk){ return leadsGanhosDoMes(mk).length; }
+function operadoraTag(l){
+  if(!l.operadora) return "";
+  return '<span class="tag">'+escapeHtml(l.operadora)+(l.quantidade_vidas? " · "+l.quantidade_vidas+" vida"+(l.quantidade_vidas==1?"":"s") : "")+'</span>';
+}
+async function setLeadEtapa(leadId, novaEtapa){
+  var lead = state.leads.filter(function(l){ return l.id===leadId; })[0];
+  var patch = {etapa: novaEtapa};
+  if(novaEtapa==="Ganho" && lead && !lead.data_ganho){ patch.data_ganho = todayISO(); }
+  var ok = await dbUpdate("leads", leadId, patch);
+  if(ok && novaEtapa==="Ganho"){ await ensureImplantacao(leadId); }
+}
+async function ensureImplantacao(leadId){
+  var existing = state.implantacoes.filter(function(i){ return i.lead_id===leadId; })[0];
+  if(existing) return existing;
+  return await dbInsert("implantacoes", {lead_id: leadId, responsavel:"Kelly"});
+}
+function metaChartHtml(mk){
+  var meta = metaValorDoMes(mk);
+  var vendido = vendasValorDoMes(mk);
+  var pct = meta>0 ? (vendido/meta) : 0;
+  var pctClamped = Math.max(0, Math.min(1,pct));
+  var falta = Math.max(meta - vendido, 0);
+  var pctFalta = meta>0 ? (1-pctClamped) : 0;
+  var excedente = vendido>meta ? vendido-meta : 0;
+  return '<div class="card"><div class="card-head"><h2>Meta de vendas — '+monthLabel(mk)+'</h2><div class="meta">'+(meta? fmtPct(pctClamped)+" da meta" : "defina a meta abaixo")+'</div></div>'+
+    '<div class="card-body">'+
+    '<div class="rowflex" style="margin-bottom:14px;align-items:flex-end;">'+
+      moneyFieldHtml("meta-valor-input", meta, "Meta de vendas do mês (R$)")+
+      '<button class="btn btn-primary" id="btn-salvar-meta">Salvar meta</button>'+
+    '</div>'+
+    (meta>0 ? (
+      '<div class="progress-track"><div class="progress-fill" style="width:'+(pctClamped*100)+'%;"></div></div>'+
+      '<div class="rowflex" style="justify-content:space-between;margin-top:8px;font-size:12.5px;">'+
+        '<span><b>'+fmtMoney(vendido)+'</b> vendido ('+fmtPct(pctClamped)+') — '+vendasQtdDoMes(mk)+' negócio(s) ganho(s)</span>'+
+        '<span class="muted">'+(falta>0? "Faltam "+fmtMoney(falta)+" ("+fmtPct(pctFalta)+") para bater a meta" : "Meta batida! Excedente de "+fmtMoney(excedente))+'</span>'+
+      '</div>'
+    ) : '<div class="empty">Defina a meta de vendas do mês acima para ver o gráfico de progresso.</div>')+
+    '</div></div>';
 }
 function viewFunil(){
   var byEtapa={}; ETAPAS.forEach(function(e){byEtapa[e]=[];});
@@ -745,16 +830,18 @@ function viewFunil(){
     .sort(function(a,b){ return a.vencimento_em<b.vencimento_em?-1:1; });
 
   var mesAtual = todayMonthKey();
-  var vendasMes = state.clientes.filter(function(c){ return c.data_fechamento && monthKeyFromISO(c.data_fechamento)===mesAtual; }).length;
-  var metaVendas = state.params.meta_vendas_mensal||0;
-  var faltamVendas = Math.max(metaVendas - vendasMes, 0);
+  var vendasQtdMes = vendasQtdDoMes(mesAtual);
+  var metaQtd = state.params.meta_vendas_mensal||0;
+  var faltamQtd = Math.max(metaQtd - vendasQtdMes, 0);
 
   var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+state.leads.length+' oportunidade(s)</div></div><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div>';
 
   var pipeTiles = '<div class="tiles">'+
-    tile("Vendas fechadas — "+monthLabel(mesAtual), vendasMes, metaVendas? (faltamVendas>0? "Faltam "+faltamVendas+" para a meta de "+metaVendas : "Meta de "+metaVendas+" atingida! 🎉") : "Defina a meta (quantidade) em Parâmetros")+
+    tile("Negócios ganhos — "+monthLabel(mesAtual), vendasQtdMes, metaQtd? (faltamQtd>0? "Faltam "+faltamQtd+" para a meta de "+metaQtd : "Meta de "+metaQtd+" atingida! 🎉") : "Defina a meta (quantidade) em Parâmetros")+
     tile("Tarefas do funil atrasadas", tarefasAtrasadas.length, tarefasAtrasadas.length? "Veja a lista abaixo" : "Tudo em dia")+
   '</div>';
+
+  var metaChart = metaChartHtml(mesAtual);
 
   var atrasoBanner = "";
   if(tarefasAtrasadas.length){
@@ -774,16 +861,22 @@ function viewFunil(){
       '<div class="kanban-col-body">'+
       (items.length===0? '<div class="empty" style="padding:16px 6px;">Nenhuma oportunidade.</div>' :
       items.map(function(l){
-        var prox = proximaTarefaLead(l.id);
-        var overdue = prox && prox.vencimento_em && prox.vencimento_em < agoraISO;
+        var abertas = tarefasAbertasDoLead(l.id);
         return '<div class="kanban-card">'+
           '<div class="k-title">'+escapeHtml(l.nome||"—")+(l.empresa?' <span class="muted">('+escapeHtml(l.empresa)+')</span>':'')+'</div>'+
           '<div class="muted">'+escapeHtml(l.produto||"—")+' · '+escapeHtml(l.vendedor||"—")+'</div>'+
+          (operadoraTag(l)? '<div style="margin-top:4px;">'+operadoraTag(l)+'</div>' : '')+
           '<div style="margin-top:4px;font-weight:600;">'+fmtMoney(l.valor_estimado)+'</div>'+
-          (prox? '<div style="margin-top:6px;"><span class="pill '+(overdue?'pill-bad':'pill-warn')+'">'+escapeHtml(prox.titulo)+' — '+fmtDateTime(prox.vencimento_em)+'</span></div>' : '')+
+          (abertas.length? '<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">'+
+            abertas.map(function(t){
+              var overdue = t.vencimento_em && t.vencimento_em < agoraISO;
+              return '<span class="pill '+(overdue?'pill-bad':'pill-warn')+'" style="justify-content:space-between;">'+escapeHtml(t.titulo)+' — '+fmtDateTime(t.vencimento_em)+' <button class="linklike" data-concluir-tarefa-lead="'+t.id+'" style="margin-left:6px;">concluir</button></span>';
+            }).join("")+
+          '</div>' : '')+
           '<select class="lead-etapa" data-lead="'+l.id+'" style="margin-top:8px;">'+ETAPAS.map(function(e2){return '<option'+(l.etapa===e2?' selected':'')+'>'+e2+'</option>';}).join("")+'</select>'+
           '<div class="rowflex" style="margin-top:6px;">'+
-            (l.etapa==="Fechado"? '<button class="linklike" data-convert-lead="'+l.id+'">virar cliente</button>' : '<button class="linklike" data-edit-lead="'+l.id+'">editar</button>')+
+            '<button class="linklike" data-edit-lead="'+l.id+'">editar</button>'+
+            (l.etapa==="Ganho"? '<button class="linklike" data-convert-lead="'+l.id+'">virar cliente</button>' : '')+
             '<button class="linklike" data-agendar-tarefa-lead="'+l.id+'">+ tarefa</button>'+
           '</div>'+
         '</div>';
@@ -791,7 +884,7 @@ function viewFunil(){
       '</div></div>';
   }).join("")+'</div>';
 
-  return header + pipeTiles + atrasoBanner + board;
+  return header + pipeTiles + metaChart + atrasoBanner + board;
 }
 function leadTarefaFormHtml(){
   return '<div class="field"><label>O que fazer</label><input id="lt-titulo" placeholder="ex: Ligar para o cliente"></div>'+
@@ -821,28 +914,91 @@ function openLeadTarefaModal(lead){
 }
 function leadFormHtml(l){
   l=l||{etapa:"Qualificação",produto:"Saúde",vendedor:"Henrique"};
+  var operadoraAtual = l.operadora && OPERADORAS.indexOf(l.operadora)===-1 ? "Outros" : (l.operadora||"");
+  var operadoraOutrosValor = (l.operadora && OPERADORAS.indexOf(l.operadora)===-1) ? l.operadora : "";
   return '<div class="field row2"><div class="field"><label>Nome do contato</label><input id="l-nome" value="'+escapeHtml(l.nome||"")+'"></div><div class="field"><label>Empresa</label><input id="l-empresa" value="'+escapeHtml(l.empresa||"")+'"></div></div>'+
   '<div class="field row2"><div class="field"><label>Produto</label><select id="l-produto">'+PRODUTOS.map(function(p){return '<option'+(l.produto===p?' selected':'')+'>'+p+'</option>';}).join("")+'</select></div><div class="field"><label>Vendedor(a)</label><select id="l-vendedor">'+VENDEDORES.map(function(v){return '<option'+(l.vendedor===v?' selected':'')+'>'+v+'</option>';}).join("")+'</select></div></div>'+
-  '<div class="field row2"><div class="field"><label>Valor estimado (R$)</label><input type="number" step="0.01" id="l-valor" value="'+(l.valor_estimado||"")+'"></div><div class="field"><label>Origem</label><input id="l-origem" value="'+escapeHtml(l.origem||"")+'"></div></div>'+
+  '<div class="field row2">'+moneyFieldHtml("l-valor", l.valor_estimado, "Valor do negócio (R$)")+'<div class="field"><label>Origem</label><input id="l-origem" value="'+escapeHtml(l.origem||"")+'"></div></div>'+
+  '<div class="field row2"><div class="field"><label>Quantidade de vidas</label><input type="number" step="1" min="0" id="l-vidas" value="'+(l.quantidade_vidas||"")+'" placeholder="ex: 4"></div>'+
+    '<div class="field"><label>Operadora / plano</label><select id="l-operadora">'+
+      '<option value="">—</option>'+
+      OPERADORAS.map(function(o){ return '<option'+(operadoraAtual===o?' selected':'')+'>'+o+'</option>'; }).join("")+
+    '</select></div></div>'+
+  '<div class="field" id="l-operadora-outros-wrap" style="'+(operadoraAtual==="Outros"?"":"display:none;")+'"><label>Qual operadora?</label><input id="l-operadora-outros" value="'+escapeHtml(operadoraOutrosValor)+'"></div>'+
   '<div class="field"><label>Etapa</label><select id="l-etapa">'+ETAPAS.map(function(e){return '<option'+(l.etapa===e?' selected':'')+'>'+e+'</option>';}).join("")+'</select></div>'+
   '<div class="field"><label>Observações</label><textarea id="l-obs">'+escapeHtml(l.observacoes||"")+'</textarea></div>';
 }
+function wireLeadFormExtra(){
+  var sel = document.getElementById("l-operadora");
+  var wrap = document.getElementById("l-operadora-outros-wrap");
+  if(sel && wrap){
+    sel.addEventListener("change", function(){ wrap.style.display = sel.value==="Outros" ? "" : "none"; });
+  }
+}
 function openLeadModal(existing){
-  openModal(existing?"Editar oportunidade":"Nova oportunidade", leadFormHtml(existing), function(closeFn){
+  openModal(existing?"Editar oportunidade":"Nova oportunidade", leadFormHtml(existing), async function(closeFn){
+    var operadoraSel = document.getElementById("l-operadora").value;
+    var operadoraOutros = document.getElementById("l-operadora-outros");
+    var operadoraFinal = operadoraSel==="Outros" ? (operadoraOutros? operadoraOutros.value.trim() : "") : operadoraSel;
+    var novaEtapa = document.getElementById("l-etapa").value;
     var data = {
       nome: document.getElementById("l-nome").value.trim(),
       empresa: document.getElementById("l-empresa").value.trim(),
       produto: document.getElementById("l-produto").value,
       vendedor: document.getElementById("l-vendedor").value,
-      valor_estimado: parseFloat(document.getElementById("l-valor").value)||0,
+      valor_estimado: parseMoneyBR(document.getElementById("l-valor").value),
+      quantidade_vidas: parseInt(document.getElementById("l-vidas").value,10)||null,
+      operadora: operadoraFinal,
       origem: document.getElementById("l-origem").value.trim(),
-      etapa: document.getElementById("l-etapa").value,
+      etapa: novaEtapa,
       observacoes: document.getElementById("l-obs").value.trim()
     };
     if(!data.nome && !data.empresa){ toast("Informe nome ou empresa."); return; }
-    if(existing) dbUpdate("leads", existing.id, data); else dbInsert("leads", data);
+    if(novaEtapa==="Ganho" && !(existing && existing.data_ganho)){ data.data_ganho = todayISO(); }
+    var leadId = existing ? existing.id : null;
+    if(existing){ await dbUpdate("leads", existing.id, data); }
+    else { var created = await dbInsert("leads", data); leadId = created && created.id; }
+    if(leadId && novaEtapa==="Ganho"){ await ensureImplantacao(leadId); }
     closeFn();
   });
+  wireLeadFormExtra();
+}
+
+/* ================= IMPLANTAÇÃO ================= */
+function clienteDoLead(leadId){ return state.clientes.filter(function(c){ return c.lead_id===leadId; })[0]; }
+function implantacaoDoLead(leadId){ return state.implantacoes.filter(function(i){ return i.lead_id===leadId; })[0]; }
+function viewImplantacao(){
+  var ganhos = state.leads.filter(function(l){ return l.etapa==="Ganho"; })
+    .sort(function(a,b){ return (b.data_ganho||"")<(a.data_ganho||"")?-1:1; });
+  var header = '<div class="topbar"><div><h1>Implantação</h1><div class="desc">Negócios ganhos — documentação, acompanhamento com a operadora, boas-vindas e boleto</div></div></div>';
+  if(ganhos.length===0) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum negócio ganho ainda — assim que marcar um negócio como "Ganho" no funil, ele aparece aqui.</div></div></div>';
+  var mesAtual = todayMonthKey();
+  var cards = ganhos.map(function(l){
+    var imp = implantacaoDoLead(l.id) || {};
+    var cli = clienteDoLead(l.id);
+    var boletoEmDia = imp.boleto_mes_referencia === mesAtual;
+    var pronta = !!(imp.documentos_solicitados && imp.subiu_operadora && imp.implantacao_confirmada);
+    return '<div class="card"><div class="card-head"><h2>'+escapeHtml(l.nome||l.empresa||"—")+'</h2><div class="meta">'+fmtMoney(l.valor_estimado)+(l.data_ganho? ' · ganho em '+fmtDateISO(l.data_ganho):'')+'</div></div>'+
+      '<div class="card-body">'+
+      (operadoraTag(l)? '<div style="margin-bottom:10px;">'+operadoraTag(l)+'</div>' : '')+
+      '<div class="helpbox">'+(cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' : '⚠️ Cadastro do cliente ainda não foi concluído.'+' <button class="linklike" data-convert-lead="'+l.id+'">completar cadastro</button>')+'</div>'+
+      '<div class="field row3">'+
+        '<label class="rowflex" style="font-weight:400;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="documentos_solicitados" '+(imp.documentos_solicitados?'checked':'')+'> Relação de documentos solicitada</label>'+
+        '<label class="rowflex" style="font-weight:400;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="subiu_operadora" '+(imp.subiu_operadora?'checked':'')+'> Documentos enviados à operadora</label>'+
+        '<label class="rowflex" style="font-weight:400;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="implantacao_confirmada" '+(imp.implantacao_confirmada?'checked':'')+'> Implantação confirmada pela operadora</label>'+
+      '</div>'+
+      '<div class="field row2"><div class="field"><label>Responsável</label><select class="imp-resp" data-imp-lead="'+l.id+'">'+TEAM.map(function(t){return '<option'+((imp.responsavel||"Kelly")===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div><div class="field"></div></div>'+
+      '<div class="field"><label>Observações do acompanhamento</label><textarea class="imp-obs" data-imp-lead="'+l.id+'">'+escapeHtml(imp.observacoes||"")+'</textarea></div>'+
+      (pronta? (
+        '<div style="border-top:1px solid var(--line); margin-top:10px; padding-top:10px;">'+
+        '<label class="rowflex" style="font-weight:400;margin-bottom:8px;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="boas_vindas_enviada" '+(imp.boas_vindas_enviada?'checked':'')+'> Mensagem de boas-vindas enviada</label>'+
+        '<div class="rowflex"><span>Boleto de '+monthLabel(mesAtual)+': '+(boletoEmDia? '<span class="pill pill-ok">enviado</span>' : '<span class="pill pill-warn">pendente</span>')+'</span>'+
+        (boletoEmDia? '' : '<button class="linklike" data-boleto-enviado="'+l.id+'">marcar como enviado</button>')+
+        '</div></div>'
+      ) : '<div class="muted" style="font-size:12px;margin-top:4px;">Marque os 3 passos acima para liberar boas-vindas e o controle de boleto mensal.</div>')+
+      '</div></div>';
+  }).join("");
+  return header + cards;
 }
 
 /* ================= TAREFAS ================= */
@@ -853,13 +1009,15 @@ function viewTarefas(){
     .sort(function(a,b){ return (a.data_vencimento||"9999")<(b.data_vencimento||"9999")?-1:1; });
   return '<div class="topbar"><div><h1>Tarefas</h1><div class="desc">Tarefas diárias, demandas, inclusões e exclusões</div></div><button class="btn btn-primary" id="btn-nova-tarefa">+ Nova tarefa</button></div>'+
   '<div class="tabs2">'+ ['',...TIPOS_TAREFA].map(function(t){ return tabbtn("tarefa-tipo", t, t||"Todas", tarefasFilterTipo); }).join("") +'</div>'+
-  '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr><th>Tipo</th><th>Título</th><th>Cliente</th><th>Responsável</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody>'+
+  '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr><th>Tipo</th><th>Título</th><th>Cliente / Negócio</th><th>Responsável</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody>'+
   (list.length===0? '<tr><td colspan="7"><div class="empty">Nenhuma tarefa cadastrada.</div></td></tr>' :
   list.map(function(t){
     var cli = state.clientes.filter(function(c){return c.id===t.cliente_id;})[0];
+    var lead = !cli && t.lead_id ? state.leads.filter(function(l){return l.id===t.lead_id;})[0] : null;
+    var quem = cli ? escapeHtml(clienteLabel(cli)) : (lead ? escapeHtml(lead.nome||lead.empresa||"—")+' <span class="tag">Funil</span>' : '—');
     var atrasada = t.status!=="Concluída" && t.data_vencimento && t.data_vencimento<hoje;
     return '<tr><td><span class="tag">'+t.tipo+'</span></td><td>'+escapeHtml(t.titulo)+(t.beneficiario_nome?' <span class="muted">('+escapeHtml(t.beneficiario_nome)+')</span>':'')+'</td>'+
-    '<td>'+(cli?escapeHtml(clienteLabel(cli)):'—')+'</td><td>'+escapeHtml(t.responsavel||"—")+'</td>'+
+    '<td>'+quem+'</td><td>'+escapeHtml(t.responsavel||"—")+'</td>'+
     '<td>'+(atrasada?'<span class="pill pill-bad">'+fmtDateISO(t.data_vencimento)+'</span>':fmtDateISO(t.data_vencimento))+'</td>'+
     '<td><select class="tarefa-status" data-tarefa="'+t.id+'">'+STATUS_TAREFA.map(function(s){return '<option'+(t.status===s?' selected':'')+'>'+s+'</option>';}).join("")+'</select></td>'+
     '<td><button class="linklike" data-edit-tarefa="'+t.id+'">editar</button></td></tr>';
@@ -980,7 +1138,7 @@ function openAgendModal(existing){
 function reembFormHtml(r){
   r=r||{status:"Solicitado",data_solicitacao:todayISO()};
   return '<div class="field row2"><div class="field"><label>Cliente</label><select id="r-cliente">'+state.clientes.map(function(c){return '<option value="'+c.id+'"'+(r.cliente_id===c.id?' selected':'')+'>'+escapeHtml(clienteLabel(c))+'</option>';}).join("")+'</select></div><div class="field"><label>Beneficiário</label><input id="r-benef" value="'+escapeHtml(r.beneficiario_nome||"")+'"></div></div>'+
-  '<div class="field row2"><div class="field"><label>Data da solicitação</label><input type="date" id="r-data" value="'+(r.data_solicitacao||"")+'"></div><div class="field"><label>Valor solicitado (R$)</label><input type="number" step="0.01" id="r-valor" value="'+(r.valor_solicitado||"")+'"></div></div>'+
+  '<div class="field row2"><div class="field"><label>Data da solicitação</label><input type="date" id="r-data" value="'+(r.data_solicitacao||"")+'"></div>'+moneyFieldHtml("r-valor", r.valor_solicitado, "Valor solicitado (R$)")+'</div>'+
   '<div class="field"><label>Descrição</label><input id="r-desc" value="'+escapeHtml(r.descricao||"")+'"></div>'+
   '<div class="field"><label>Status</label><select id="r-status">'+STATUS_REEMBOLSO.map(function(s){return '<option'+(r.status===s?' selected':'')+'>'+s+'</option>';}).join("")+'</select></div>'+
   '<div class="field"><label>Observações</label><textarea id="r-obs">'+escapeHtml(r.observacoes||"")+'</textarea></div>';
@@ -991,7 +1149,7 @@ function openReembModal(existing){
       cliente_id: document.getElementById("r-cliente").value || null,
       beneficiario_nome: document.getElementById("r-benef").value.trim(),
       data_solicitacao: document.getElementById("r-data").value || null,
-      valor_solicitado: parseFloat(document.getElementById("r-valor").value)||0,
+      valor_solicitado: parseMoneyBR(document.getElementById("r-valor").value),
       descricao: document.getElementById("r-desc").value.trim(),
       status: document.getElementById("r-status").value,
       observacoes: document.getElementById("r-obs").value.trim()
@@ -1059,7 +1217,7 @@ function viewParametros(){
   return '<div class="topbar"><div><h1>Parâmetros</h1><div class="desc">Premissas usadas nos cálculos</div></div></div>'+
   '<div class="card"><div class="card-body">'+
     '<div class="field row2"><div class="field"><label>Alíquota de imposto (%)</label><input type="number" step="0.1" id="p-imposto" value="'+(p.taxa_imposto*100)+'"></div><div class="field"><label>% vitalício mensal</label><input type="number" step="0.1" id="p-vitalicio" value="'+(p.percentual_vitalicio*100)+'"></div></div>'+
-    '<div class="field row2"><div class="field"><label>Meta mensal padrão (R$)</label><input type="number" step="0.01" id="p-meta" value="'+(p.meta_mensal_padrao||0)+'"></div><div class="field"><label>Nº parcelas cheias</label><input type="number" step="1" id="p-parcelas" value="'+(p.parcelas_cheias||3)+'"></div></div>'+
+    '<div class="field row2">'+moneyFieldHtml("p-meta", p.meta_mensal_padrao||0, "Meta mensal padrão (R$)")+'<div class="field"><label>Nº parcelas cheias</label><input type="number" step="1" id="p-parcelas" value="'+(p.parcelas_cheias||3)+'"></div></div>'+
     '<div class="field row2"><div class="field"><label>Meta de vendas mensal (quantidade)</label><input type="number" step="1" id="p-meta-vendas" value="'+(p.meta_vendas_mensal||0)+'"></div><div class="field"></div></div>'+
     '<button class="btn btn-primary" id="btn-salvar-params" style="width:fit-content;">Salvar</button>'+
   '</div></div>'+
@@ -1069,6 +1227,7 @@ function viewParametros(){
 
 /* ================= WIRE ================= */
 function wireActions(){
+  wireMoneyInputs(document);
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-del-cliente]"), function(btn){
@@ -1096,10 +1255,51 @@ function wireActions(){
 
   var btnNovoLead = document.getElementById("btn-novo-lead"); if(btnNovoLead) btnNovoLead.onclick=function(){openLeadModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-lead]"), function(btn){ btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-edit-lead");})[0]; openLeadModal(l); }; });
-  Array.prototype.forEach.call(document.querySelectorAll(".lead-etapa"), function(sel){ sel.onchange=function(){ dbUpdate("leads", sel.getAttribute("data-lead"), {etapa:sel.value}); }; });
+  Array.prototype.forEach.call(document.querySelectorAll(".lead-etapa"), function(sel){ sel.onchange=function(){ setLeadEtapa(sel.getAttribute("data-lead"), sel.value); }; });
+  Array.prototype.forEach.call(document.querySelectorAll(".imp-check"), function(chk){
+    chk.onchange = function(){
+      var leadId = chk.getAttribute("data-imp-lead");
+      var field = chk.getAttribute("data-field");
+      var imp = implantacaoDoLead(leadId);
+      var patch = {}; patch[field] = chk.checked;
+      if(imp) dbUpdate("implantacoes", imp.id, patch);
+      else { patch.lead_id = leadId; patch.responsavel = "Kelly"; dbInsert("implantacoes", patch); }
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".imp-resp"), function(sel){
+    sel.onchange = function(){
+      var leadId = sel.getAttribute("data-imp-lead");
+      var imp = implantacaoDoLead(leadId);
+      if(imp) dbUpdate("implantacoes", imp.id, {responsavel:sel.value});
+      else dbInsert("implantacoes", {lead_id:leadId, responsavel:sel.value});
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".imp-obs"), function(ta){
+    ta.onblur = function(){
+      var leadId = ta.getAttribute("data-imp-lead");
+      var imp = implantacaoDoLead(leadId);
+      if(imp) dbUpdate("implantacoes", imp.id, {observacoes:ta.value.trim()});
+      else dbInsert("implantacoes", {lead_id:leadId, responsavel:"Kelly", observacoes:ta.value.trim()});
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-boleto-enviado]"), function(btn){
+    btn.onclick = function(){
+      var leadId = btn.getAttribute("data-boleto-enviado");
+      var imp = implantacaoDoLead(leadId);
+      if(imp) dbUpdate("implantacoes", imp.id, {boleto_mes_referencia: todayMonthKey()});
+    };
+  });
+  var btnSalvarMeta = document.getElementById("btn-salvar-meta");
+  if(btnSalvarMeta) btnSalvarMeta.onclick = async function(){
+    var mk = todayMonthKey();
+    var valor = parseMoneyBR(document.getElementById("meta-valor-input").value);
+    var existing = state.metas_mensais.filter(function(m){ return m.mes===mk; })[0];
+    if(existing){ await dbUpdate("metas_mensais", existing.id, {valor_meta:valor}); }
+    else { await dbInsert("metas_mensais", {mes:mk, valor_meta:valor}); }
+  };
   Array.prototype.forEach.call(document.querySelectorAll("[data-convert-lead]"), function(btn){
     btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-convert-lead");})[0]; if(!l) return;
-      openClienteModal({titular_nome:l.nome, razao_social:l.empresa, produto:l.produto, vendedor:l.vendedor, valor_contrato_total:l.valor_estimado, data_fechamento:todayISO(), data_inclusao:todayISO(), status:"Ativo"});
+      openClienteModal({lead_id:l.id, titular_nome:l.nome, razao_social:l.empresa, produto:l.produto, plano_nome:(l.operadora||""), vendedor:l.vendedor, valor_contrato_total:l.valor_estimado, data_fechamento:l.data_ganho||todayISO(), data_inclusao:todayISO(), status:"Ativo"});
     };
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-agendar-tarefa-lead]"), function(btn){
@@ -1160,42 +1360,33 @@ function wireActions(){
   var btnSalvarParams = document.getElementById("btn-salvar-params");
   if(btnSalvarParams) btnSalvarParams.onclick=function(){
     saveParams({
-      taxa_imposto: (parseFloat(document.getElementById("p-imposto").value)||0)/100,
-      percentual_vitalicio: (parseFloat(document.getElementById("p-vitalicio").value)||0)/100,
-      meta_mensal_padrao: parseFloat(document.getElementById("p-meta").value)||0,
-      parcelas_cheias: parseInt(document.getElementById("p-parcelas").value)||3,
-      meta_vendas_mensal: parseInt(document.getElementById("p-meta-vendas").value)||0
-    });
+      taxa_imposto: parseFloat(document.getElementById("p-imposto").value)/100, percentual_vitalicio: parseFloat(document.getElementById("p-vitalicio").value)/100, meta_mensal_padrao: parseMoneyBR(document.getElementById("p-meta").value), parcelas_cheias: parseInt(document.getElementById("p-parcelas").value,10)||3, meta_vendas_mensal: parseInt(document.getElementById("p-meta-vendas").value,10)||0 });
   };
 }
 
-/* ================= boot ================= */
+/* ================= boot: link de recuperação/convite por e-mail (token_hash) ================= */
+/* Corrige o bug do link de recuperação/convite expirando antes do clique (otp_expired):
+   scanners de segurança de e-mail (ex: Google Workspace) "pré-visitam" o link do Supabase
+   e consomem o token de uso único antes da pessoa clicar de verdade. Por isso o template
+   de e-mail no Supabase (Authentication > Emails > Templates) deve apontar para o próprio
+   site com token_hash e type na URL, em vez do endpoint /auth/v1/verify do Supabase:
+     {{ .SiteURL }}/?type=recovery&token_hash={{ .TokenHash }}   (Reset password / Invite user)
+   Aqui o token só é de fato consumido quando o app carrega e chama verifyOtp — depois disso
+   o evento PASSWORD_RECOVERY do onAuthStateChange dispara normalmente. */
 (function(){
-  var qp = new URLSearchParams(window.location.search);
-  var tokenHash = qp.get("token_hash");
-  var otpType = qp.get("type");
-  if(tokenHash && otpType === "recovery"){
-    window.history.replaceState({}, document.title, window.location.pathname);
-    sb.auth.verifyOtp({token_hash: tokenHash, type: "recovery"}).then(function(res){
-      if(res.error){
-        var loginError = document.getElementById("login-error");
-        if(loginError){
-          loginError.textContent = "Link de redefinicao invalido ou expirado. Peca um novo link.";
-          loginError.classList.add("show");
-        }
-      }
-    });
-    return;
-  }
-  sb.auth.getSession().then(function(res){
-    state.session = res.data.session;
-    if(state.session){
-      document.getElementById("login-screen").style.display="none";
-      document.getElementById("app-shell").style.display="flex";
-      document.getElementById("current-email").textContent = state.session.user.email;
-      loadAll();
+  try{
+    var qp = new URLSearchParams(window.location.search);
+    var tokenHash = qp.get("token_hash");
+    var type = qp.get("type");
+    if(tokenHash && type){
+      sb.auth.verifyOtp({token_hash: tokenHash, type: type}).then(function(res){
+        if(res.error) console.error(res.error);
+        history.replaceState(null, "", window.location.pathname);
+      });
     }
-  });
+  }catch(e){ console.error(e); }
 })();
+
+render();
 
 })();
