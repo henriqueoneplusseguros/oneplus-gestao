@@ -41,7 +41,13 @@
     </div>
     <nav id="nav"></nav>
     <div class="whoami">
-      <div class="email" id="current-email"></div>
+      <div class="rowflex" style="justify-content:space-between; align-items:flex-start; flex-wrap:nowrap; gap:6px; margin-bottom:8px;">
+        <div class="email" id="current-email" style="margin-bottom:0; min-width:0; overflow-wrap:anywhere;"></div>
+        <button class="notif-bell" id="btn-notif" type="button" title="Minhas tarefas pendentes">
+          🔔<span class="notif-badge" id="notif-badge" style="display:none;"></span>
+        </button>
+      </div>
+      <div class="notif-panel" id="notif-panel" style="display:none;"></div>
       <button class="btn-logout" id="btn-logout">Sair</button>
     </div>
   </div>
