@@ -352,3 +352,53 @@ create table if not exists boletos_clientes (
 
 alter table boletos_clientes enable row level security;
 create policy "auth all boletos_clientes" on boletos_clientes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+-- ========== Migração 2026-09-11 (parte 6): plano anterior, coparticipação e CARÊNCIAS ==========
+-- Campos novos no cadastro do cliente (aba Implantação / Clientes):
+-- plano_atual_tem / plano_atual_nome: se o cliente já tinha plano de saúde antes e qual.
+-- compra_carencias / coparticipacao: sim ou não.
+-- carencia_modelo_id + carencia_categoria: qual "quadro de carências" (modelo) e qual
+-- faixa/coluna daquele quadro se aplica a esse cliente — usados para calcular
+-- automaticamente a data em que cada carência termina, a partir da vigência (início).
+alter table clientes add column if not exists plano_atual_tem boolean;
+alter table clientes add column if not exists plano_atual_nome text;
+alter table clientes add column if not exists compra_carencias boolean;
+alter table clientes add column if not exists coparticipacao boolean;
+alter table clientes add column if not exists carencia_modelo_id uuid;
+alter table clientes add column if not exists carencia_categoria text;
+
+-- Modelos de carência: cada linha é um "quadro" tipo o da Porto Seguro (Linha P) — nome,
+-- operadora, as colunas (categorias, ex: "10 a 29 vidas") e as linhas (itens/procedimentos,
+-- cada um com a carência em dias/meses por coluna) ficam guardados como JSON, editáveis
+-- pela tela Parâmetros > Modelos de carência.
+create table if not exists carencia_modelos (
+    id uuid primary key default gen_random_uuid(),
+    nome text not null,
+    operadora text,
+    categorias jsonb not null default '[]'::jsonb,
+    itens jsonb not null default '[]'::jsonb,
+    criado_por text,
+    criado_em timestamptz default now()
+  );
+
+alter table carencia_modelos enable row level security;
+create policy "auth all carencia_modelos" on carencia_modelos for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+-- Semente: já deixa cadastrado o quadro da Porto Seguro (Linha P) que o Henrique mandou de
+-- exemplo, pra não precisar digitar tudo de novo na tela. Observação: como a "vigência
+-- (início)" do cliente é só a data (sem hora), toda célula "24 horas" do quadro original
+-- foi guardada como "1 dia" — o resultado da data de liberação é idêntico, só muda o rótulo.
+insert into carencia_modelos (nome, operadora, categorias, itens)
+select 'Porto Seguro — Linha P', 'Porto Seguro',
+  '["03 a 09 vidas (dentro do prazo)","10 a 29 vidas (dentro do prazo)","Fora do prazo (03 a 9 vidas)","Redução 01","Redução 02"]'::jsonb,
+  $json$[
+    {"nome":"Urgência e Emergência","unidade":"dias","valores":[1,1,1,1,0]},
+    {"nome":"Consultas, exames simples e pequenas cirurgias (porte anestésico zero) em ambulatório","unidade":"dias","valores":[15,15,15,1,0]},
+    {"nome":"Terapias especiais","unidade":"dias","valores":[180,180,180,180,180]},
+    {"nome":"Exames especiais","unidade":"dias","valores":[180,0,180,60,0]},
+    {"nome":"Internações clínicas e/ou cirúrgicas, inclusive psiquiátricas","unidade":"dias","valores":[180,0,180,60,0]},
+    {"nome":"Parto a termo","unidade":"dias","valores":[300,300,300,300,300]},
+    {"nome":"Terapias Simples e Fisioterapia","unidade":"dias","valores":[90,90,90,60,60]},
+    {"nome":"CPT - doenças e lesões preexistentes","unidade":"meses","valores":[24,24,24,24,24]}
+  ]$json$::jsonb
+where not exists (select 1 from carencia_modelos where nome = 'Porto Seguro — Linha P');
