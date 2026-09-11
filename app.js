@@ -44,7 +44,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [],
+    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [],
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -129,6 +129,47 @@ function addMonthsISO(s,n){
   return dt.getFullYear()+"-"+pad2(dt.getMonth()+1)+"-"+pad2(dt.getDate());
 }
 function daysBetween(aISO,bISO){ return Math.round((parseISO(bISO)-parseISO(aISO))/86400000); }
+function addDaysISO(s,n){
+  if(!s) return null;
+  var d = parseISO(s);
+  d.setDate(d.getDate()+parseInt(n,10));
+  return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate());
+}
+/* Calcula, para um cliente (vigência início + modelo + categoria escolhidos), quando
+   cada procedimento do quadro de carências fica liberado. Retorna null se faltar algum
+   dos três dados; retorna um array de {nome, unidade, valor, liberadoEm} caso contrário. */
+function calcularCarencias(vigInicio, modeloId, categoriaNome){
+  if(!vigInicio || !modeloId || !categoriaNome) return null;
+  var modelo = state.carencia_modelos.filter(function(m){ return m.id===modeloId; })[0];
+  if(!modelo) return null;
+  var ci = (modelo.categorias||[]).indexOf(categoriaNome);
+  if(ci<0) return null;
+  return (modelo.itens||[]).map(function(item){
+    var v = item.valores ? item.valores[ci] : null;
+    var liberadoEm = null;
+    if(v!=null && v!==""){
+      liberadoEm = item.unidade==="meses" ? addMonthsISO(vigInicio, v) : addDaysISO(vigInicio, v);
+    }
+    return {nome:item.nome, unidade:item.unidade, valor:v, liberadoEm:liberadoEm};
+  });
+}
+function carenciaCategoriaOptionsHtml(modeloId, selected){
+  var modelo = state.carencia_modelos.filter(function(m){ return m.id===modeloId; })[0];
+  var cats = modelo ? (modelo.categorias||[]) : [];
+  return '<option value="">—</option>'+cats.map(function(cat){ return '<option'+(selected===cat?' selected':'')+'>'+escapeHtml(cat)+'</option>'; }).join("");
+}
+function carenciasTableHtml(rows){
+  if(!rows || !rows.length) return '<div class="empty">Escolha o modelo, a faixa/categoria e a vigência (início) para calcular as datas.</div>';
+  var hoje = todayISO();
+  return '<div class="tablewrap"><table class="grid"><thead><tr><th>Procedimento</th><th>Carência</th><th>Liberado em</th></tr></thead><tbody>'+
+    rows.map(function(r){
+      var carenciaTxt = (r.valor==null||r.valor==="") ? "—" : (r.valor===0 ? "Isento" : r.valor+" "+(r.unidade==="meses"?"meses":"dias"));
+      var liberadoTxt = r.liberadoEm ? fmtDateISO(r.liberadoEm) : "—";
+      var badge = r.liberadoEm ? (r.liberadoEm<=hoje ? ' <span class="pill pill-ok">já liberado</span>' : ' <span class="pill pill-warn">aguardando</span>') : "";
+      return '<tr><td>'+escapeHtml(r.nome)+'</td><td>'+carenciaTxt+'</td><td>'+liberadoTxt+badge+'</td></tr>';
+    }).join("")+
+  '</tbody></table></div>';
+}
 function ageOnISO(birthISO, atISO){
   var b=parseISO(birthISO), a=parseISO(atISO);
   var age = a.getFullYear()-b.getFullYear();
@@ -320,7 +361,8 @@ async function loadAll(){
             sb.from("equipe").select("*"),
             sb.from("tabelas_precos_cliente").select("*").order("ano_vigencia",{ascending:false}),
             sb.from("historico_reajustes").select("*").order("data_reajuste",{ascending:false}),
-            sb.from("boletos_clientes").select("*")
+            sb.from("boletos_clientes").select("*"),
+            sb.from("carencia_modelos").select("*").order("nome")
     ]);
     var errs = results.filter(function(r){return r.error;});
     if(errs.length){ console.error(errs); toast("Alguns dados não carregaram — veja o console."); }
@@ -338,6 +380,7 @@ async function loadAll(){
     state.tabelas_precos_cliente = results[11].data || [];
     state.historico_reajustes = results[12].data || [];
     state.boletos_clientes = results[13].data || [];
+    state.carencia_modelos = results[14].data || [];
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
   render();
@@ -356,7 +399,8 @@ async function reload(table){
         equipe: function(){ return sb.from("equipe").select("*"); },
         tabelas_precos_cliente: function(){ return sb.from("tabelas_precos_cliente").select("*").order("ano_vigencia",{ascending:false}); },
         historico_reajustes: function(){ return sb.from("historico_reajustes").select("*").order("data_reajuste",{ascending:false}); },
-        boletos_clientes: function(){ return sb.from("boletos_clientes").select("*"); }
+        boletos_clientes: function(){ return sb.from("boletos_clientes").select("*"); },
+        carencia_modelos: function(){ return sb.from("carencia_modelos").select("*").order("nome"); }
   };
   var r = await map[table]();
   if(r.error){ console.error(r.error); toast("Erro ao atualizar "+table); return; }
@@ -584,7 +628,7 @@ function viewClientes(){
       '<td>'+(c.status==="Cancelado"?'<span class="pill pill-bad">Cancelado</span>':'<span class="pill pill-ok">Ativo</span>')+'</td>'+
       '<td>'+(faixa? faixa.label+(faixa.nextChangeISO?'<br><span class="muted">muda '+fmtDateISO(faixa.nextChangeISO)+'</span>':'') : '—')+'</td>'+
       '<td>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</td>'+
-            '<td><button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button> <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button></td>'+
+            '<td><button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button> <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button></td>'+
     '</tr>';
   }).join(""))+
   '</tbody></table></div></div>';
@@ -612,6 +656,17 @@ function clienteFormHtml(c, deps){
   '<div class="field row3">'+moneyFieldHtml("f-valor-benef", c.valor_por_beneficiario, "Valor por beneficiário (R$)")+moneyFieldHtml("f-valor-total", c.valor_contrato_total, "Valor do contrato total (R$)")+moneyFieldHtml("f-bonus", c.bonus_parcela4||0, "Bônus parcela 4 (R$, opcional)")+'</div>'+
   '<div class="field row3"><div class="field"><label>Data de fechamento (p/ comissão)</label><input type="date" id="f-fechamento" value="'+(c.data_fechamento||c.data_inclusao||"")+'"></div><div class="field"><label>Última revisão de plano</label><input type="date" id="f-revisao" value="'+(c.ultima_revisao||"")+'"></div><div class="field"><label>Status</label><select id="f-status"><option'+(c.status==="Ativo"?' selected':'')+'>Ativo</option><option'+(c.status==="Cancelado"?' selected':'')+'>Cancelado</option></select></div></div>'+
   '<div class="field row3"><div class="field"><label>Reajuste (índice %)</label><input type="number" step="0.01" id="f-reajuste-pct" value="'+(c.percentual_reajuste||"")+'" placeholder="ex: 8,5"></div><div class="field"><label>&nbsp;</label><button type="button" class="btn btn-ghost" id="btn-aplicar-reajuste">Aplicar reajuste ao valor do contrato</button></div><div class="field"><label>Último reajuste em</label><input type="date" id="f-reajuste-data" value="'+(c.data_ultimo_reajuste||"")+'" readonly></div></div>'+
+  '</fieldset>'+
+  '<fieldset><legend>Plano anterior e carências</legend>'+
+  '<div class="field row2"><div class="field"><label>Já possuía plano de saúde?</label><select id="f-plano-atual-tem"><option value="">—</option><option value="Sim"'+(c.plano_atual_tem===true?' selected':'')+'>Sim</option><option value="Não"'+(c.plano_atual_tem===false?' selected':'')+'>Não</option></select></div>'+
+    '<div class="field" id="f-plano-atual-nome-wrap" style="'+(c.plano_atual_tem?"":"display:none;")+'"><label>Qual plano?</label><input id="f-plano-atual-nome" value="'+escapeHtml(c.plano_atual_nome||"")+'" placeholder="ex: Bradesco"></div></div>'+
+  '<div class="field row2"><div class="field"><label>Compra de carências?</label><select id="f-compra-carencias"><option value="">—</option><option value="Sim"'+(c.compra_carencias===true?' selected':'')+'>Sim</option><option value="Não"'+(c.compra_carencias===false?' selected':'')+'>Não</option></select></div>'+
+    '<div class="field"><label>Coparticipação?</label><select id="f-coparticipacao"><option value="">—</option><option value="Sim"'+(c.coparticipacao===true?' selected':'')+'>Sim</option><option value="Não"'+(c.coparticipacao===false?' selected':'')+'>Não</option></select></div></div>'+
+  '<div class="field row2"><div class="field"><label>Modelo de carência (quadro da operadora)</label><select id="f-carencia-modelo"><option value="">—</option>'+
+    state.carencia_modelos.map(function(m){ return '<option value="'+m.id+'"'+(c.carencia_modelo_id===m.id?' selected':'')+'>'+escapeHtml(m.nome)+'</option>'; }).join("")+
+  '</select></div><div class="field"><label>Faixa / categoria</label><select id="f-carencia-categoria">'+carenciaCategoriaOptionsHtml(c.carencia_modelo_id, c.carencia_categoria)+'</select></div></div>'+
+  (state.carencia_modelos.length===0? '<div class="muted" style="font-size:11.5px;">Nenhum modelo cadastrado ainda — cadastre em Parâmetros &gt; Modelos de carência.</div>' : '')+
+  '<div id="carencia-preview" style="margin-top:6px;"></div>'+
   '</fieldset>'+
   '<fieldset><legend>Boleto mensal</legend>'+
   '<div class="field row2">'+
@@ -698,6 +753,32 @@ function wireClienteFormExtra(){
   if(elVigInicio){ elVigInicio.addEventListener("change", updateVigFim); }
   if(elVigMeses){ elVigMeses.addEventListener("change", updateVigFim); }
 
+  var elPlanoAtualTem = document.getElementById("f-plano-atual-tem");
+  var elPlanoAtualNomeWrap = document.getElementById("f-plano-atual-nome-wrap");
+  if(elPlanoAtualTem && elPlanoAtualNomeWrap){
+    elPlanoAtualTem.addEventListener("change", function(){ elPlanoAtualNomeWrap.style.display = elPlanoAtualTem.value==="Sim" ? "" : "none"; });
+  }
+  var elCarModelo = document.getElementById("f-carencia-modelo");
+  var elCarCategoria = document.getElementById("f-carencia-categoria");
+  function updateCarenciaPreview(){
+    var preview = document.getElementById("carencia-preview");
+    if(!preview) return;
+    var vig = elVigInicio ? elVigInicio.value : "";
+    var modeloId = elCarModelo ? elCarModelo.value : "";
+    var categoria = elCarCategoria ? elCarCategoria.value : "";
+    var rows = calcularCarencias(vig, modeloId, categoria);
+    preview.innerHTML = rows ? ('<div class="muted" style="font-size:11.5px;margin-bottom:4px;">Carências calculadas a partir da vigência (início):</div>'+carenciasTableHtml(rows)) : '';
+  }
+  if(elCarModelo){
+    elCarModelo.addEventListener("change", function(){
+      if(elCarCategoria) elCarCategoria.innerHTML = carenciaCategoriaOptionsHtml(elCarModelo.value, "");
+      updateCarenciaPreview();
+    });
+  }
+  if(elCarCategoria){ elCarCategoria.addEventListener("change", updateCarenciaPreview); }
+  if(elVigInicio){ elVigInicio.addEventListener("change", updateCarenciaPreview); }
+  updateCarenciaPreview();
+
   var btnReajuste = document.getElementById("btn-aplicar-reajuste");
   if(btnReajuste){
     btnReajuste.onclick = function(){
@@ -757,6 +838,12 @@ function readClienteForm(){
       data_ultimo_reajuste: document.getElementById("f-reajuste-data").value || null,
       boleto_ativo: document.getElementById("f-boleto-ativo").checked,
       boleto_dia_vencimento: parseInt(document.getElementById("f-boleto-dia").value,10) || null,
+      plano_atual_tem: (function(){ var v=document.getElementById("f-plano-atual-tem").value; return v===""?null:(v==="Sim"); })(),
+      plano_atual_nome: document.getElementById("f-plano-atual-nome").value.trim(),
+      compra_carencias: (function(){ var v=document.getElementById("f-compra-carencias").value; return v===""?null:(v==="Sim"); })(),
+      coparticipacao: (function(){ var v=document.getElementById("f-coparticipacao").value; return v===""?null:(v==="Sim"); })(),
+      carencia_modelo_id: document.getElementById("f-carencia-modelo").value || null,
+      carencia_categoria: document.getElementById("f-carencia-categoria").value || null,
       cep: document.getElementById("f-cep").value.trim(),
       endereco_numero: document.getElementById("f-end-numero").value.trim(),
       endereco_complemento: document.getElementById("f-end-compl").value.trim(),
@@ -1059,6 +1146,14 @@ async function importarClientesExcel(file){
             '</fieldset>'+
           '</div>';
   }
+  function openCarenciasModal(cliente){
+      var rows = calcularCarencias(cliente.vigencia_inicio, cliente.carencia_modelo_id, cliente.carencia_categoria);
+      var modelo = state.carencia_modelos.filter(function(m){ return m.id===cliente.carencia_modelo_id; })[0];
+      var info = modelo ?
+        ('<div class="muted" style="font-size:12px;margin-bottom:8px;">Modelo: <b>'+escapeHtml(modelo.nome)+'</b> · Faixa: <b>'+escapeHtml(cliente.carencia_categoria||"—")+'</b> · Vigência início: '+fmtDateISO(cliente.vigencia_inicio)+'</div>')
+        : '<div class="empty">Este cliente ainda não tem modelo de carência configurado — edite o cadastro para escolher um modelo e uma faixa.</div>';
+      openModal("Carências — "+clienteLabel(cliente), info + carenciasTableHtml(rows), function(closeFn){ closeFn(); }, "Fechar");
+  }
   function openHistoricoModal(cliente){
       var close = openModal("Histórico de preços — "+clienteLabel(cliente), historicoModalBodyHtml(cliente), function(closeFn){ closeFn(); }, "Fechar");
       wireHistoricoModal(cliente, close);
@@ -1240,7 +1335,7 @@ function viewFunil(){
   var metaQtd = state.params.meta_vendas_mensal||0;
   var faltamQtd = Math.max(metaQtd - vendasQtdMes, 0);
 
-  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+state.leads.length+' oportunidade(s) · negócios ganhos saem do quadro e seguem na aba Implantação</div></div><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div>';
+  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+state.leads.length+' oportunidade(s) · arraste o cartão entre as colunas para mudar a etapa · negócios ganhos saem do quadro e seguem na aba Implantação</div></div><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div>';
 
   var pipeTiles = '<div class="tiles">'+
     tile("Negócios ganhos — "+monthLabel(mesAtual), vendasQtdMes, metaQtd? (faltamQtd>0? "Faltam "+faltamQtd+" para a meta de "+metaQtd : "Meta de "+metaQtd+" atingida! 🎉") : "Defina a meta (quantidade) em Parâmetros")+
@@ -1265,11 +1360,11 @@ function viewFunil(){
     var items = byEtapa[etapa]||[];
     var total = items.reduce(function(s,l){return s+(l.valor_estimado||0);},0);
     return '<div class="kanban-col"><div class="kanban-col-head"><h3>'+etapa+'</h3><div class="meta">'+items.length+' · '+fmtMoney(total)+'</div></div>'+
-      '<div class="kanban-col-body">'+
+      '<div class="kanban-col-body" data-drop-etapa="'+etapa+'">'+
       (items.length===0? '<div class="empty" style="padding:16px 6px;">Nenhuma oportunidade.</div>' :
       items.map(function(l){
         var abertas = tarefasAbertasDoLead(l.id);
-        return '<div class="kanban-card">'+
+        return '<div class="kanban-card" draggable="true" data-drag-lead="'+l.id+'">'+
           '<div class="k-title">'+escapeHtml(l.nome||"—")+(l.empresa?' <span class="muted">('+escapeHtml(l.empresa)+')</span>':'')+'</div>'+
           '<div class="muted">'+escapeHtml(l.produto||"—")+' · '+escapeHtml(l.vendedor||"—")+'</div>'+
           (operadoraTag(l)? '<div style="margin-top:4px;">'+operadoraTag(l)+'</div>' : '')+
@@ -1714,6 +1809,94 @@ function interacaoFormHtml(){
 }
 
 /* ================= PARÂMETROS ================= */
+/* ================= MODELOS DE CARÊNCIA (editor tipo planilha) ================= */
+var modeloEdit = null; // {id?, nome, operadora, categorias:[...], itens:[{nome,unidade,valores:[...]}]}
+function openModeloCarenciaModal(existing){
+  modeloEdit = existing ? JSON.parse(JSON.stringify(existing)) : {nome:"", operadora:"", categorias:["Categoria 1"], itens:[]};
+  if(!modeloEdit.categorias || !modeloEdit.categorias.length) modeloEdit.categorias = ["Categoria 1"];
+  if(!modeloEdit.itens) modeloEdit.itens = [];
+  openModal(existing?"Editar modelo de carência":"Novo modelo de carência", modeloEditorHtml(), async function(closeFn){
+    readModeloEditorIntoState();
+    var nome = document.getElementById("mc-nome").value.trim();
+    var operadora = document.getElementById("mc-operadora").value.trim();
+    if(!nome){ toast("Dê um nome ao modelo (ex: Porto Seguro — Linha P)."); return; }
+    var data = {nome:nome, operadora:operadora, categorias:modeloEdit.categorias, itens:modeloEdit.itens};
+    if(existing && existing.id){ await dbUpdate("carencia_modelos", existing.id, data); }
+    else{ await dbInsert("carencia_modelos", data); }
+    closeFn();
+  }, "Salvar modelo");
+  wireModeloEditor();
+}
+function modeloEditorHtml(){
+  return '<div class="field row2"><div class="field"><label>Nome do modelo</label><input id="mc-nome" value="'+escapeHtml(modeloEdit.nome||"")+'" placeholder="ex: Porto Seguro — Linha P"></div><div class="field"><label>Operadora</label><input id="mc-operadora" value="'+escapeHtml(modeloEdit.operadora||"")+'" placeholder="ex: Porto Seguro"></div></div>'+
+  '<div class="helpbox">Cada coluna é uma faixa/categoria (ex: "10 a 29 vidas"). Cada linha é um procedimento, com a carência (em dias ou meses) para cada faixa — deixe em branco quando não se aplica, ou 0 para "Isento".</div>'+
+  '<div id="modelo-editor-body">'+modeloEditorBodyHtml()+'</div>';
+}
+function modeloEditorBodyHtml(){
+  return '<div class="tablewrap"><table class="grid" id="mc-table"><thead><tr><th style="min-width:190px;">Procedimento</th><th style="min-width:90px;">Unidade</th>'+
+    modeloEdit.categorias.map(function(cat,ci){
+      return '<th style="min-width:150px;"><input class="mc-cat-input" data-cat-idx="'+ci+'" value="'+escapeHtml(cat)+'" style="width:100%;font-weight:600;"><button type="button" class="iconbtn" data-remove-cat="'+ci+'" title="Remover coluna" style="margin-top:4px;">✕</button></th>';
+    }).join("")+
+    '<th></th></tr></thead><tbody>'+
+    (modeloEdit.itens.length===0? '<tr><td colspan="'+(modeloEdit.categorias.length+3)+'"><div class="empty">Nenhum procedimento ainda — clique em "+ linha" abaixo.</div></td></tr>' :
+    modeloEdit.itens.map(function(item,ii){
+      return '<tr>'+
+        '<td><input class="mc-item-nome" data-item-idx="'+ii+'" value="'+escapeHtml(item.nome||"")+'" style="width:100%;"></td>'+
+        '<td><select class="mc-item-unidade" data-item-idx="'+ii+'"><option value="dias"'+(item.unidade!=="meses"?' selected':'')+'>dias</option><option value="meses"'+(item.unidade==="meses"?' selected':'')+'>meses</option></select></td>'+
+        modeloEdit.categorias.map(function(cat,ci){
+          var v = (item.valores && item.valores[ci]!=null) ? item.valores[ci] : "";
+          return '<td><input type="number" min="0" class="mc-item-valor" data-item-idx="'+ii+'" data-cat-idx="'+ci+'" value="'+v+'" style="width:80px;" placeholder="—"></td>';
+        }).join("")+
+        '<td><button type="button" class="iconbtn" data-remove-item="'+ii+'">✕</button></td>'+
+      '</tr>';
+    }).join(""))+
+    '</tbody></table></div>'+
+    '<div class="rowflex" style="margin-top:8px;gap:14px;"><button type="button" class="linklike" id="mc-add-cat">+ coluna (faixa/categoria)</button><button type="button" class="linklike" id="mc-add-item">+ linha (procedimento)</button></div>';
+}
+function readModeloEditorIntoState(){
+  Array.prototype.forEach.call(document.querySelectorAll(".mc-cat-input"), function(inp){
+    modeloEdit.categorias[parseInt(inp.getAttribute("data-cat-idx"),10)] = inp.value;
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".mc-item-nome"), function(inp){
+    var idx = parseInt(inp.getAttribute("data-item-idx"),10);
+    if(modeloEdit.itens[idx]) modeloEdit.itens[idx].nome = inp.value;
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".mc-item-unidade"), function(sel){
+    var idx = parseInt(sel.getAttribute("data-item-idx"),10);
+    if(modeloEdit.itens[idx]) modeloEdit.itens[idx].unidade = sel.value;
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".mc-item-valor"), function(inp){
+    var ii = parseInt(inp.getAttribute("data-item-idx"),10), ci = parseInt(inp.getAttribute("data-cat-idx"),10);
+    if(!modeloEdit.itens[ii]) return;
+    if(!modeloEdit.itens[ii].valores) modeloEdit.itens[ii].valores = [];
+    modeloEdit.itens[ii].valores[ci] = inp.value===""? null : parseFloat(inp.value);
+  });
+}
+function rerenderModeloEditor(){
+  var body = document.getElementById("modelo-editor-body");
+  if(!body) return;
+  body.innerHTML = modeloEditorBodyHtml();
+  wireModeloEditor();
+}
+function wireModeloEditor(){
+  var addCat = document.getElementById("mc-add-cat");
+  if(addCat) addCat.onclick = function(){ readModeloEditorIntoState(); modeloEdit.categorias.push("Nova categoria"); rerenderModeloEditor(); };
+  var addItem = document.getElementById("mc-add-item");
+  if(addItem) addItem.onclick = function(){ readModeloEditorIntoState(); modeloEdit.itens.push({nome:"Novo procedimento", unidade:"dias", valores:[]}); rerenderModeloEditor(); };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-remove-cat]"), function(btn){
+    btn.onclick = function(){
+      readModeloEditorIntoState();
+      var idx = parseInt(btn.getAttribute("data-remove-cat"),10);
+      if(modeloEdit.categorias.length<=1){ toast("O modelo precisa de pelo menos uma coluna."); return; }
+      modeloEdit.categorias.splice(idx,1);
+      modeloEdit.itens.forEach(function(it){ if(it.valores) it.valores.splice(idx,1); });
+      rerenderModeloEditor();
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-remove-item]"), function(btn){
+    btn.onclick = function(){ readModeloEditorIntoState(); modeloEdit.itens.splice(parseInt(btn.getAttribute("data-remove-item"),10),1); rerenderModeloEditor(); };
+  });
+}
 function viewParametros(){
   var p = state.params;
   return '<div class="topbar"><div><h1>Parâmetros</h1><div class="desc">Premissas usadas nos cálculos</div></div></div>'+
@@ -1722,6 +1905,17 @@ function viewParametros(){
     '<div class="field row2">'+moneyFieldHtml("p-meta", p.meta_mensal_padrao||0, "Meta mensal padrão (R$)")+'<div class="field"><label>Nº parcelas cheias</label><input type="number" step="1" id="p-parcelas" value="'+(p.parcelas_cheias||3)+'"></div></div>'+
     '<div class="field row2"><div class="field"><label>Meta de vendas mensal (quantidade)</label><input type="number" step="1" id="p-meta-vendas" value="'+(p.meta_vendas_mensal||0)+'"></div><div class="field"></div></div>'+
     '<button class="btn btn-primary" id="btn-salvar-params" style="width:fit-content;">Salvar</button>'+
+  '</div></div>'+
+  '<div class="card"><div class="card-head"><h2>Modelos de carência</h2><div class="meta">quadros de operadoras/planos</div></div><div class="card-body">'+
+  '<div class="helpbox">Cadastre aqui o quadro de carências de cada operadora/plano (como o da Porto Seguro — Linha P). Depois, no cadastro do cliente (fieldset "Plano anterior e carências"), escolha o modelo e a faixa certa e o sistema calcula sozinho a data em que cada carência termina, a partir da vigência (início).</div>'+
+  (state.carencia_modelos.length===0? '<div class="empty">Nenhum modelo cadastrado ainda.</div>' :
+  '<div class="tablewrap"><table class="grid"><thead><tr><th>Nome</th><th>Operadora</th><th>Procedimentos</th><th>Faixas</th><th></th></tr></thead><tbody>'+
+  state.carencia_modelos.map(function(m){
+    return '<tr><td>'+escapeHtml(m.nome)+'</td><td>'+escapeHtml(m.operadora||"—")+'</td><td>'+(m.itens||[]).length+'</td><td>'+(m.categorias||[]).length+'</td>'+
+      '<td><button class="linklike" data-edit-modelo-carencia="'+m.id+'">editar</button> <button class="linklike" data-del-modelo-carencia="'+m.id+'" style="color:var(--danger);">excluir</button></td></tr>';
+  }).join("")+
+  '</tbody></table></div>')+
+  '<button class="btn btn-ghost" id="btn-novo-modelo-carencia" style="margin-top:10px;">+ novo modelo de carência</button>'+
   '</div></div>'+
   '<div class="card"><div class="card-head"><h2>Equipe com acesso</h2></div><div class="card-body"><div class="helpbox">Para adicionar ou remover o acesso de alguém da equipe, use o painel do Supabase: Authentication &gt; Users. O e-mail cadastrado aqui é usado para saber "quem está logado" (para filtrar minhas tarefas e o sino de notificação) e para onde mandar o e-mail de tarefa vencendo.</div>'+
   '<div class="tablewrap"><table class="grid"><thead><tr><th>Nome</th><th>E-mail (notificações)</th><th></th></tr></thead><tbody>'+
@@ -1738,6 +1932,7 @@ function wireActions(){
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-hist-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-hist-cliente");})[0]; if(c) openHistoricoModal(c); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-carencias-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-carencias-cliente");})[0]; if(c) openCarenciasModal(c); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-del-cliente]"), function(btn){
     btn.onclick=function(){
       var id = btn.getAttribute("data-del-cliente");
@@ -1764,6 +1959,25 @@ function wireActions(){
   var btnNovoLead = document.getElementById("btn-novo-lead"); if(btnNovoLead) btnNovoLead.onclick=function(){openLeadModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-lead]"), function(btn){ btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-edit-lead");})[0]; openLeadModal(l); }; });
   Array.prototype.forEach.call(document.querySelectorAll(".lead-etapa"), function(sel){ sel.onchange=function(){ setLeadEtapa(sel.getAttribute("data-lead"), sel.value); }; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-drag-lead]"), function(card){
+    card.addEventListener("dragstart", function(e){
+      e.dataTransfer.setData("text/plain", card.getAttribute("data-drag-lead"));
+      e.dataTransfer.effectAllowed = "move";
+      card.classList.add("dragging");
+    });
+    card.addEventListener("dragend", function(){ card.classList.remove("dragging"); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-drop-etapa]"), function(col){
+    col.addEventListener("dragover", function(e){ e.preventDefault(); col.classList.add("drag-over"); });
+    col.addEventListener("dragleave", function(){ col.classList.remove("drag-over"); });
+    col.addEventListener("drop", function(e){
+      e.preventDefault();
+      col.classList.remove("drag-over");
+      var leadId = e.dataTransfer.getData("text/plain");
+      var novaEtapa = col.getAttribute("data-drop-etapa");
+      if(leadId) setLeadEtapa(leadId, novaEtapa);
+    });
+  });
   Array.prototype.forEach.call(document.querySelectorAll(".imp-check"), function(chk){
     chk.onchange = function(){
       var leadId = chk.getAttribute("data-imp-lead");
@@ -1911,6 +2125,18 @@ function wireActions(){
     saveParams({
       taxa_imposto: parseFloat(document.getElementById("p-imposto").value)/100, percentual_vitalicio: parseFloat(document.getElementById("p-vitalicio").value)/100, meta_mensal_padrao: parseMoneyBR(document.getElementById("p-meta").value), parcelas_cheias: parseInt(document.getElementById("p-parcelas").value,10)||3, meta_vendas_mensal: parseInt(document.getElementById("p-meta-vendas").value,10)||0 });
   };
+  var btnNovoModeloCarencia = document.getElementById("btn-novo-modelo-carencia");
+  if(btnNovoModeloCarencia) btnNovoModeloCarencia.onclick=function(){ openModeloCarenciaModal(null); };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-edit-modelo-carencia]"), function(btn){
+    btn.onclick=function(){ var m=state.carencia_modelos.filter(function(x){return x.id===btn.getAttribute("data-edit-modelo-carencia");})[0]; openModeloCarenciaModal(m); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-del-modelo-carencia]"), function(btn){
+    btn.onclick=function(){
+      var id = btn.getAttribute("data-del-modelo-carencia");
+      if(!confirm("Excluir este modelo de carência? Clientes que usam esse modelo deixam de calcular as datas automaticamente.")) return;
+      dbDelete("carencia_modelos", id);
+    };
+  });
 }
 
 /* ================= boot: link de recuperação/convite por e-mail (token_hash) ================= */
