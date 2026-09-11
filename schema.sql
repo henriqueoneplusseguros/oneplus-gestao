@@ -308,3 +308,47 @@ alter table tabelas_precos_cliente enable row level security;
 alter table historico_reajustes enable row level security;
 create policy "auth all tabelas_precos_cliente" on tabelas_precos_cliente for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "auth all historico_reajustes" on historico_reajustes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+
+-- ===================================================================
+-- Migração 2026-09-11 (parte 5): botão de concluir implantação (some
+-- da aba Implantação quando vira cliente) + controle mensal de envio
+-- de boleto recorrente por cliente.
+-- ===================================================================
+
+-- Corrige bug: o app.js já usa o campo "boas_vindas_enviada" (checkbox
+-- que só aparece quando a implantação está pronta), mas essa coluna
+-- nunca foi criada em nenhuma migração anterior.
+alter table implantacoes add column if not exists boas_vindas_enviada boolean default false;
+
+-- Marca que a implantação foi concluída — a partir daí ela some da
+-- aba Implantação (o negócio continua "Ganho" no funil e o cadastro
+-- continua existindo normalmente em Clientes).
+alter table implantacoes add column if not exists concluida boolean default false;
+alter table implantacoes add column if not exists concluida_em timestamptz;
+
+-- ========== BOLETO MENSAL (clientes que recebem envio recorrente de boleto) ==========
+-- boleto_ativo: liga/desliga o serviço de envio de boleto para o cliente.
+-- boleto_dia_vencimento: dia do mês (1 a 31) em que o boleto desse cliente vence — cada
+-- cliente pode ter um dia diferente.
+alter table clientes add column if not exists boleto_ativo boolean default false;
+alter table clientes add column if not exists boleto_dia_vencimento int;
+
+-- Um registro por cliente + mês de referência (formato "AAAA-MM"), recriado todo mês
+-- automaticamente pela tela (não precisa cadastrar nada com antecedência) — guarda se o
+-- boleto daquele mês já foi enviado, preservando o histórico dos meses anteriores.
+create table if not exists boletos_clientes (
+    id uuid primary key default gen_random_uuid(),
+    cliente_id uuid references clientes(id) on delete cascade,
+    mes_referencia text not null,
+    data_vencimento date,
+    enviado boolean default false,
+    enviado_em timestamptz,
+    observacoes text,
+    criado_por text,
+    criado_em timestamptz default now(),
+    unique(cliente_id, mes_referencia)
+  );
+
+alter table boletos_clientes enable row level security;
+create policy "auth all boletos_clientes" on boletos_clientes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
