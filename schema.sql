@@ -241,3 +241,14 @@ alter table equipe enable row level security;
 create policy "auth all metas_mensais" on metas_mensais for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "auth all implantacoes" on implantacoes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 create policy "auth all equipe" on equipe for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+
+-- ===================================================================
+-- Migração 2026-09-10 (parte 3): quadro kanban de tarefas + tarefas
+-- concluídas somem da lista/kanban automaticamente após 10 dias.
+-- ===================================================================
+
+-- Guarda quando a tarefa foi marcada como concluída, para o sistema
+-- saber quando escondê-la (10 dias depois). Fica null se a tarefa
+-- não está concluída, ou se foi concluída antes desta atualização.
+alter table tarefas add column if not exists concluido_em timestamptz;
