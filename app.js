@@ -448,9 +448,7 @@ var NAV = [
   {id:"implantacao", label:"Implantação", icon:"flag"},
   {id:"tarefas", label:"Tarefas", icon:"check"},
   {id:"agenda", label:"Agenda", icon:"calendar"},
-  {id:"atendimentos", label:"Atendimentos", icon:"heart"},
   {id:"posvenda", label:"Pós-venda", icon:"message"},
-  {id:"boletos", label:"Boletos", icon:"receipt"},
   {id:"parametros", label:"Parâmetros", icon:"sliders"}
 ];
 var ICONS = {
@@ -486,9 +484,9 @@ function render(){
   else if(state.tab==="implantacao") main.innerHTML = viewImplantacao();
   else if(state.tab==="tarefas") main.innerHTML = viewTarefas();
   else if(state.tab==="agenda") main.innerHTML = viewAgenda();
-  else if(state.tab==="atendimentos") main.innerHTML = viewAtendimentos();
+  else if(state.tab==="atendimentos"){ posvendaSection="atendimentos"; main.innerHTML = viewPosvenda(); }
   else if(state.tab==="posvenda") main.innerHTML = viewPosvenda();
-  else if(state.tab==="boletos") main.innerHTML = viewBoletos();
+  else if(state.tab==="boletos"){ posvendaSection="boletos"; main.innerHTML = viewPosvenda(); }
   else if(state.tab==="parametros") main.innerHTML = viewParametros();
   wireActions();
 }
@@ -1447,6 +1445,14 @@ var tarefasViewMode = "lista"; // "lista" ou "kanban"
     var dias = (Date.now() - new Date(t.concluido_em).getTime()) / 86400000;
     return dias < TAREFAS_DIAS_SOMEM_CONCLUIDA;
   }
+  /* Cada pessoa só vê, na aba Tarefas, o que é dela: tarefas atribuídas a ela (responsavel)
+     ou que ela mesma criou (criado_por) — assim quem agenda algo pra si mesmo é o único que
+     vê, e quem agenda pra outra pessoa continua acompanhando junto com quem recebeu. */
+  function tarefaMinha(t){
+    var nome = currentUserName();
+    var email = currentUser();
+    return (!!nome && t.responsavel===nome) || (!!email && t.criado_por===email);
+  }
   /* Centraliza a troca de status: registra quando a tarefa foi concluída (pra saber quando
      escondê-la depois) e limpa essa data se ela for reaberta. */
   function setTarefaStatus(id, status){
@@ -1457,9 +1463,9 @@ var tarefasViewMode = "lista"; // "lista" ou "kanban"
   }
   function viewTarefas(){
     var hoje = todayISO();
-    var list = state.tarefas.filter(function(t){ return (!tarefasFilterTipo || t.tipo===tarefasFilterTipo) && tarefaVisivel(t); })
+    var list = state.tarefas.filter(function(t){ return (!tarefasFilterTipo || t.tipo===tarefasFilterTipo) && tarefaVisivel(t) && tarefaMinha(t); })
     .sort(function(a,b){ return (a.data_vencimento||"9999")<(b.data_vencimento||"9999")?-1:1; });
-    return '<div class="topbar"><div><h1>Tarefas</h1><div class="desc">Tarefas diárias, demandas, inclusões e exclusões · concluídas somem daqui '+TAREFAS_DIAS_SOMEM_CONCLUIDA+' dias depois</div></div><button class="btn btn-primary" id="btn-nova-tarefa">+ Nova tarefa</button></div>'+
+    return '<div class="topbar"><div><h1>Tarefas</h1><div class="desc">Mostrando só as suas — atribuídas a você ou criadas por você · concluídas somem daqui '+TAREFAS_DIAS_SOMEM_CONCLUIDA+' dias depois</div></div><button class="btn btn-primary" id="btn-nova-tarefa">+ Nova tarefa</button></div>'+
       '<div class="tabs2">'+ ['',...TIPOS_TAREFA].map(function(t){ return tabbtn("tarefa-tipo", t, t||"Todas", tarefasFilterTipo); }).join("") +'</div>'+
       '<div class="tabs2">'+tabbtn("tarefa-view","lista","☰ Lista",tarefasViewMode)+tabbtn("tarefa-view","kanban","▦ Kanban",tarefasViewMode)+'</div>'+
       (tarefasViewMode==="kanban" ? viewTarefasKanban(list, hoje) : viewTarefasLista(list, hoje));
@@ -1645,9 +1651,20 @@ function openReembModal(existing){
   });
 }
 
-/* ================= PÓS-VENDA ================= */
+/* ================= PÓS-VENDA (setor: relacionamento + atendimentos + boletos) ================= */
+var posvendaSection = "relacionamento"; // "relacionamento" | "atendimentos" | "boletos"
 var posvendaTab = "atencao";
+/* Pós-venda agrupa os 3 serviços do setor num só lugar — cada um continua com sua própria
+   tela (agendamentos/reembolsos, boletos, relacionamento), só a navegação principal some do
+   menu lateral e vira sub-aba aqui dentro. */
 function viewPosvenda(){
+  var secNav = '<div class="topbar"><div><h1>Pós-venda</h1><div class="desc">Atendimentos, boletos e relacionamento com o cliente — tudo no mesmo setor</div></div></div>'+
+    '<div class="tabs2">'+tabbtn("posvenda-sec","relacionamento","Relacionamento",posvendaSection)+tabbtn("posvenda-sec","atendimentos","Atendimentos",posvendaSection)+tabbtn("posvenda-sec","boletos","Boletos",posvendaSection)+'</div>';
+  if(posvendaSection==="atendimentos") return secNav + viewAtendimentos();
+  if(posvendaSection==="boletos") return secNav + viewBoletos();
+  return secNav + viewRelacionamento();
+}
+function viewRelacionamento(){
   var hoje = todayISO();
   var ativos = state.clientes.filter(function(c){return c.status!=="Cancelado";});
   var revisoes = ativos.map(function(c){return {c:c,r:nextRevisao(c)};}).filter(function(x){return x.r && daysBetween(hoje,x.r.date)<=60;});
@@ -1660,7 +1677,7 @@ function viewPosvenda(){
   });
   var log = state.interacoes.slice(0,40);
 
-  return '<div class="topbar"><div><h1>Pós-venda &amp; Relacionamento</h1><div class="desc">Cadência de conteúdo e histórico</div></div><button class="btn btn-primary" id="btn-nova-interacao">+ Registrar interação</button></div>'+
+  return '<div class="topbar" style="margin-top:14px;"><div><h2 style="margin:0;">Relacionamento</h2><div class="desc">Cadência de conteúdo e histórico</div></div><button class="btn btn-primary" id="btn-nova-interacao">+ Registrar interação</button></div>'+
   '<div class="tabs2">'+tabbtn("posvenda","atencao","Precisa de atenção",posvendaTab)+tabbtn("posvenda","sugestao","Modelos de mensagem",posvendaTab)+tabbtn("posvenda","historico","Histórico",posvendaTab)+'</div>'+
   (posvendaTab==="atencao"? (
     '<div class="card"><div class="card-head"><h2>Sem contato há mais de 21 dias</h2><div class="meta">'+semContato.length+'</div></div><div class="card-body">'+
@@ -1854,6 +1871,7 @@ function wireActions(){
     };
   });
 
+  Array.prototype.forEach.call(document.querySelectorAll("[data-posvenda-sec-tab]"), function(el){ el.onclick=function(){ posvendaSection=el.getAttribute("data-posvenda-sec-tab"); render(); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-posvenda-tab]"), function(el){ el.onclick=function(){ posvendaTab=el.getAttribute("data-posvenda-tab"); render(); }; });
   var btnNovaInteracao = document.getElementById("btn-nova-interacao");
   if(btnNovaInteracao) btnNovaInteracao.onclick=function(){
