@@ -230,7 +230,7 @@ document.addEventListener("click", function(e){
 });
 document.getElementById("notif-panel").addEventListener("click", function(e){
   var btn = e.target.closest("[data-concluir-notif]");
-  if(btn){ dbUpdate("tarefas", btn.getAttribute("data-concluir-notif"), {status:"Concluída"}); }
+    if(btn){ setTarefaStatus(btn.getAttribute("data-concluir-notif"), "Concluída"); }
 });
 
 sb.auth.onAuthStateChange(function(event, session){
@@ -1093,28 +1093,76 @@ function viewImplantacao(){
 
 /* ================= TAREFAS ================= */
 var tarefasFilterTipo = "";
-function viewTarefas(){
-  var hoje = todayISO();
-  var list = state.tarefas.filter(function(t){ return !tarefasFilterTipo || t.tipo===tarefasFilterTipo; })
+var tarefasViewMode = "lista"; // "lista" ou "kanban"
+  var TAREFAS_DIAS_SOMEM_CONCLUIDA = 10; // dias após concluída até sumir da lista/kanban
+  /* Uma tarefa concluída some da lista/kanban depois de N dias — mas nunca é apagada do banco,
+     só deixa de aparecer aqui. Tarefas concluídas antes desta atualização (sem concluido_em
+        registrado) continuam aparecendo, pra não sumir nada sem querer. */
+  function tarefaVisivel(t){
+    if(t.status!=="Concluída" || !t.concluido_em) return true;
+    var dias = (Date.now() - new Date(t.concluido_em).getTime()) / 86400000;
+    return dias < TAREFAS_DIAS_SOMEM_CONCLUIDA;
+  }
+  /* Centraliza a troca de status: registra quando a tarefa foi concluída (pra saber quando
+     escondê-la depois) e limpa essa data se ela for reaberta. */
+  function setTarefaStatus(id, status){
+    var t = state.tarefas.filter(function(x){ return x.id===id; })[0];
+    var patch = {status:status};
+    patch.concluido_em = status==="Concluída" ? ((t && t.status==="Concluída" && t.concluido_em) ? t.concluido_em : new Date().toISOString()) : null;
+    dbUpdate("tarefas", id, patch);
+  }
+  function viewTarefas(){
+    var hoje = todayISO();
+    var list = state.tarefas.filter(function(t){ return (!tarefasFilterTipo || t.tipo===tarefasFilterTipo) && tarefaVisivel(t); })
     .sort(function(a,b){ return (a.data_vencimento||"9999")<(b.data_vencimento||"9999")?-1:1; });
-  return '<div class="topbar"><div><h1>Tarefas</h1><div class="desc">Tarefas diárias, demandas, inclusões e exclusões</div></div><button class="btn btn-primary" id="btn-nova-tarefa">+ Nova tarefa</button></div>'+
-  '<div class="tabs2">'+ ['',...TIPOS_TAREFA].map(function(t){ return tabbtn("tarefa-tipo", t, t||"Todas", tarefasFilterTipo); }).join("") +'</div>'+
-  '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr><th>Tipo</th><th>Título</th><th>Cliente / Negócio</th><th>Responsável</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody>'+
-  (list.length===0? '<tr><td colspan="7"><div class="empty">Nenhuma tarefa cadastrada.</div></td></tr>' :
-  list.map(function(t){
-    var cli = state.clientes.filter(function(c){return c.id===t.cliente_id;})[0];
-    var lead = !cli && t.lead_id ? state.leads.filter(function(l){return l.id===t.lead_id;})[0] : null;
-    var quem = cli ? escapeHtml(clienteLabel(cli)) : (lead ? escapeHtml(lead.nome||lead.empresa||"—")+' <span class="tag">Funil</span>' : '—');
-    var atrasada = t.status!=="Concluída" && t.data_vencimento && t.data_vencimento<hoje;
-    var quando = t.vencimento_em ? fmtDateTime(t.vencimento_em) : fmtDateISO(t.data_vencimento);
-    return '<tr><td><span class="tag">'+t.tipo+'</span></td><td>'+escapeHtml(t.titulo)+(t.beneficiario_nome?' <span class="muted">('+escapeHtml(t.beneficiario_nome)+')</span>':'')+'</td>'+
-    '<td>'+quem+'</td><td>'+escapeHtml(t.responsavel||"—")+'</td>'+
-    '<td>'+(atrasada?'<span class="pill pill-bad">'+quando+'</span>':quando)+'</td>'+
-    '<td><select class="tarefa-status" data-tarefa="'+t.id+'">'+STATUS_TAREFA.map(function(s){return '<option'+(t.status===s?' selected':'')+'>'+s+'</option>';}).join("")+'</select></td>'+
-    '<td><button class="linklike" data-edit-tarefa="'+t.id+'">editar</button></td></tr>';
-  }).join(""))+
-  '</tbody></table></div></div>';
-}
+    return '<div class="topbar"><div><h1>Tarefas</h1><div class="desc">Tarefas diárias, demandas, inclusões e exclusões · concluídas somem daqui '+TAREFAS_DIAS_SOMEM_CONCLUIDA+' dias depois</div></div><button class="btn btn-primary" id="btn-nova-tarefa">+ Nova tarefa</button></div>'+
+      '<div class="tabs2">'+ ['',...TIPOS_TAREFA].map(function(t){ return tabbtn("tarefa-tipo", t, t||"Todas", tarefasFilterTipo); }).join("") +'</div>'+
+      '<div class="tabs2">'+tabbtn("tarefa-view","lista","☰ Lista",tarefasViewMode)+tabbtn("tarefa-view","kanban","▦ Kanban",tarefasViewMode)+'</div>'+
+      (tarefasViewMode==="kanban" ? viewTarefasKanban(list, hoje) : viewTarefasLista(list, hoje));
+  }
+  function viewTarefasLista(list, hoje){
+    return '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr><th>Tipo</th><th>Título</th><th>Cliente / Negócio</th><th>Responsável</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody>'+
+      (list.length===0? '<tr><td colspan="7"><div class="empty">Nenhuma tarefa por aqui.</div></td></tr>' :
+       list.map(function(t){
+         var cli = state.clientes.filter(function(c){return c.id===t.cliente_id;})[0];
+         var lead = !cli && t.lead_id ? state.leads.filter(function(l){return l.id===t.lead_id;})[0] : null;
+         var quem = cli ? escapeHtml(clienteLabel(cli)) : (lead ? escapeHtml(lead.nome||lead.empresa||"—")+' <span class="tag">Funil</span>' : '—');
+         var atrasada = t.status!=="Concluída" && t.data_vencimento && t.data_vencimento<hoje;
+         var quando = t.vencimento_em ? fmtDateTime(t.vencimento_em) : fmtDateISO(t.data_vencimento);
+         return '<tr><td><span class="tag">'+t.tipo+'</span></td><td>'+escapeHtml(t.titulo)+(t.beneficiario_nome?' <span class="muted">('+escapeHtml(t.beneficiario_nome)+')</span>':'')+'</td>'+
+           '<td>'+quem+'</td><td>'+escapeHtml(t.responsavel||"—")+'</td>'+
+           '<td>'+(atrasada?'<span class="pill pill-bad">'+quando+'</span>':quando)+'</td>'+
+           '<td><select class="tarefa-status" data-tarefa="'+t.id+'">'+STATUS_TAREFA.map(function(s){return '<option'+(t.status===s?' selected':'')+'>'+s+'</option>';}).join("")+'</select></td>'+
+           '<td><button class="linklike" data-edit-tarefa="'+t.id+'">editar</button></td></tr>';
+       }).join(""))+
+      '</tbody></table></div></div>';
+  }
+  function viewTarefasKanban(list, hoje){
+    var byStatus={}; STATUS_TAREFA.forEach(function(s){byStatus[s]=[];});
+    list.forEach(function(t){ (byStatus[t.status]||(byStatus[t.status]=[])).push(t); });
+    return '<div class="kanban-board">'+STATUS_TAREFA.map(function(status){
+      var items = byStatus[status]||[];
+      return '<div class="kanban-col"><div class="kanban-col-head"><h3>'+status+'</h3><div class="meta">'+items.length+'</div></div>'+
+        '<div class="kanban-col-body">'+
+        (items.length===0? '<div class="empty" style="padding:16px 6px;">Nada por aqui.</div>' :
+         items.map(function(t){
+           var cli = state.clientes.filter(function(c){return c.id===t.cliente_id;})[0];
+           var lead = !cli && t.lead_id ? state.leads.filter(function(l){return l.id===t.lead_id;})[0] : null;
+           var quem = cli ? clienteLabel(cli) : (lead ? (lead.nome||lead.empresa||"—") : "");
+           var atrasada = t.status!=="Concluída" && t.data_vencimento && t.data_vencimento<hoje;
+           var quando = t.vencimento_em ? fmtDateTime(t.vencimento_em) : fmtDateISO(t.data_vencimento);
+           return '<div class="kanban-card">'+
+             '<div class="k-title">'+escapeHtml(t.titulo)+'</div>'+
+             '<div class="muted"><span class="tag">'+t.tipo+'</span> · '+escapeHtml(t.responsavel||"—")+'</div>'+
+             (quem? '<div class="muted">'+escapeHtml(quem)+'</div>' : '')+
+             '<div style="margin-top:4px;">'+(atrasada?'<span class="pill pill-bad">'+quando+'</span>':'<span class="muted">'+quando+'</span>')+'</div>'+
+             '<select class="tarefa-status" data-tarefa="'+t.id+'">'+STATUS_TAREFA.map(function(s2){return '<option'+(t.status===s2?' selected':'')+'>'+s2+'</option>';}).join("")+'</select>'+
+             '<div class="rowflex" style="margin-top:6px;"><button class="linklike" data-edit-tarefa="'+t.id+'">editar</button></div>'+
+             '</div>';
+         }).join(""))+
+        '</div></div>';
+    }).join("")+'</div>';
+  }
 function tarefaFormHtml(t){
   t=t||{tipo:"Tarefa",status:"Pendente",data_vencimento:todayISO()};
   return '<div class="field row2"><div class="field"><label>Tipo</label><select id="t-tipo">'+TIPOS_TAREFA.map(function(x){return '<option'+(t.tipo===x?' selected':'')+'>'+x+'</option>';}).join("")+'</select></div><div class="field"><label>Responsável</label><select id="t-resp">'+TEAM.map(function(x){return '<option'+(t.responsavel===x?' selected':'')+'>'+x+'</option>';}).join("")+'</select></div></div>'+
@@ -1137,6 +1185,7 @@ function openTarefaModal(existing){
       status: document.getElementById("t-status").value,
       descricao: document.getElementById("t-desc").value.trim()
     };
+        data.concluido_em = data.status==="Concluída" ? ((existing && existing.status==="Concluída" && existing.concluido_em) ? existing.concluido_em : new Date().toISOString()) : null;
     if(!data.titulo){ toast("Informe um título."); return; }
     if(existing) dbUpdate("tarefas", existing.id, data); else dbInsert("tarefas", data);
     closeFn();
@@ -1403,13 +1452,14 @@ function wireActions(){
     btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-agendar-tarefa-lead");})[0]; if(l) openLeadTarefaModal(l); };
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-concluir-tarefa-lead]"), function(btn){
-    btn.onclick=function(){ dbUpdate("tarefas", btn.getAttribute("data-concluir-tarefa-lead"), {status:"Concluída"}); };
+        btn.onclick=function(){ setTarefaStatus(btn.getAttribute("data-concluir-tarefa-lead"), "Concluída"); };
   });
 
-  Array.prototype.forEach.call(document.querySelectorAll("[data-tarefa-tipo-tab]"), function(el){ el.onclick=function(){ tarefasFilterTipo=el.getAttribute("data-tarefa-tipo-tab"); render(); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-tarefa-tipo-tab]"), function(el){ el.onclick=function(){ tarefasFilterTipo=el.getAttribute("data-tarefa-tipo-tab"); render(); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-tarefa-view-tab]"), function(el){ el.onclick=function(){ tarefasViewMode=el.getAttribute("data-tarefa-view-tab"); render(); }; });
   var btnNovaTarefa = document.getElementById("btn-nova-tarefa"); if(btnNovaTarefa) btnNovaTarefa.onclick=function(){openTarefaModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-tarefa]"), function(btn){ btn.onclick=function(){ var t=state.tarefas.filter(function(x){return x.id===btn.getAttribute("data-edit-tarefa");})[0]; openTarefaModal(t); }; });
-  Array.prototype.forEach.call(document.querySelectorAll(".tarefa-status"), function(sel){ sel.onchange=function(){ dbUpdate("tarefas", sel.getAttribute("data-tarefa"), {status:sel.value}); }; });
+    Array.prototype.forEach.call(document.querySelectorAll(".tarefa-status"), function(sel){ sel.onchange=function(){ setTarefaStatus(sel.getAttribute("data-tarefa"), sel.value); }; });
 
   Array.prototype.forEach.call(document.querySelectorAll("[data-atend-tab]"), function(el){ el.onclick=function(){ atendimentosTab=el.getAttribute("data-atend-tab"); render(); }; });
   var btnNovoAtend = document.getElementById("btn-novo-atendimento");
