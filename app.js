@@ -5,7 +5,7 @@
 var cfg = window.ONEPLUS_CONFIG || {};
 if(!cfg.SUPABASE_URL || cfg.SUPABASE_URL.indexOf("COLE_AQUI") === 0){
   document.body.innerHTML = '<div style="max-width:520px;margin:80px auto;font-family:sans-serif;padding:24px;border:1px solid #ddd;border-radius:12px;">' +
-    '<h2 style="font-family:Georgia,serif;">Falta configurar</h2>' +
+        '<h2>Falta configurar</h2>' +
     '<p>Abra o arquivo <code>config.js</code> e cole a Project URL e a anon public key do seu projeto Supabase (Settings &gt; API). Depois recarregue esta página.</p></div>';
   return;
 }
