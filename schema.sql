@@ -252,3 +252,59 @@ create policy "auth all equipe" on equipe for all using (auth.role() = 'authenti
 -- saber quando escondê-la (10 dias depois). Fica null se a tarefa
 -- não está concluída, ou se foi concluída antes desta atualização.
 alter table tarefas add column if not exists concluido_em timestamptz;
+
+
+-- ===================================================================
+-- Migração 2026-09-11 (parte 4): tabela de preços negociada por
+-- cliente (por ano de vigência, com as categorias/faixas etárias
+-- contratadas) + histórico de reajustes anuais aplicados a cada
+-- cliente. Cada cliente/empresa/pessoa física tem sua própria tabela
+-- (não é um catálogo compartilhado por operadora/ano), e clientes
+-- diferentes podem ter categorias diferentes mesmo na mesma
+-- operadora/plano.
+-- ===================================================================
+
+-- Categoria contratada (ex: Enfermaria, Quarto, Apartamento) pelo
+-- titular e por cada dependente — cada um pode estar em uma categoria
+-- diferente dentro da mesma tabela do cliente.
+alter table clientes add column if not exists categoria_contratada text;
+alter table dependentes add column if not exists categoria_contratada text;
+
+-- Uma linha por cliente + ano de vigência. "tabela" guarda o grid
+-- completo categoria → faixa etária → valor, em jsonb, ex:
+-- { "Enfermaria": { "0 a 18 anos": 450.00, "19 a 23 anos": 520.00, ... },
+--   "Quarto": { ... } }
+create table if not exists tabelas_precos_cliente (
+    id uuid primary key default gen_random_uuid(),
+    cliente_id uuid references clientes(id) on delete cascade,
+    ano_vigencia int not null,
+    operadora text,
+    tabela jsonb not null default '{}'::jsonb,
+    observacoes text,
+    criado_por text,
+    criado_em timestamptz default now(),
+    unique(cliente_id, ano_vigencia)
+  );
+
+-- Um registro por reajuste anual aplicado a um cliente: só o índice
+-- percentual é digitado — o sistema aplica sobre a tabela vigente e
+-- gera a tabela do ano seguinte automaticamente, preservando as
+-- tabelas anteriores intactas (histórico completo, ano a ano).
+create table if not exists historico_reajustes (
+    id uuid primary key default gen_random_uuid(),
+    cliente_id uuid references clientes(id) on delete cascade,
+    data_reajuste date not null default current_date,
+    indice_percentual numeric(7,3) not null,
+    tabela_anterior_id uuid references tabelas_precos_cliente(id) on delete set null,
+    tabela_nova_id uuid references tabelas_precos_cliente(id) on delete set null,
+    valor_total_antes numeric(12,2),
+    valor_total_depois numeric(12,2),
+    observacoes text,
+    criado_por text,
+    criado_em timestamptz default now()
+  );
+
+alter table tabelas_precos_cliente enable row level security;
+alter table historico_reajustes enable row level security;
+create policy "auth all tabelas_precos_cliente" on tabelas_precos_cliente for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "auth all historico_reajustes" on historico_reajustes for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
