@@ -402,3 +402,28 @@ select 'Porto Seguro — Linha P', 'Porto Seguro',
     {"nome":"CPT - doenças e lesões preexistentes","unidade":"meses","valores":[24,24,24,24,24]}
   ]$json$::jsonb
 where not exists (select 1 from carencia_modelos where nome = 'Porto Seguro — Linha P');
+
+-- ========== FUNIL ESTILO PIPEDRIVE ==========
+-- Campos que o app.js já usa em "leads" mas que faltavam aqui (foram criados direto no
+-- Supabase em algum momento) — adiciono de forma segura (if not exists) pra o schema.sql
+-- voltar a refletir o banco real, sem risco pra quem já tiver essas colunas.
+alter table leads add column if not exists quantidade_vidas int;
+alter table leads add column if not exists operadora text;
+alter table leads add column if not exists data_ganho date;
+
+-- Novidades do funil: probabilidade (override manual, padrão vem da etapa no app),
+-- motivo da perda e data da última movimentação de etapa (usada pro selo de "negócio parado").
+alter table leads add column if not exists probabilidade numeric(5,2);
+alter table leads add column if not exists motivo_perda text;
+alter table leads add column if not exists etapa_atualizada_em timestamptz default now();
+
+-- Notas do negócio (painel de detalhes, estilo Pipedrive) — separado das tarefas/atividades.
+create table if not exists lead_notas (
+  id uuid primary key default gen_random_uuid(),
+  lead_id uuid references leads(id) on delete cascade,
+  texto text not null,
+  autor text,
+  criado_em timestamptz default now()
+);
+alter table lead_notas enable row level security;
+create policy "auth all lead_notas" on lead_notas for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');

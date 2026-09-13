@@ -114,7 +114,7 @@ table.grid tr:hover td{background:rgba(172,166,152,.08);}
 .tab2.active{color:var(--navy); border-color:var(--taupe); font-weight:600;}
 @media (prefers-color-scheme: dark){ .tab2.active{color:#fff;} }
 
-.modal-backdrop{position:fixed; inset:0; background:rgba(13,20,32,.5); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto; z-index:50;}
+.modal-backdrop{position:fixed; inset:0; background:rgba(13,20,32,.5); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto; z-index:57;}
 .modal{background:var(--surface); border-radius:14px; width:100%; max-width:600px; box-shadow:0 20px 60px rgba(0,0,0,.3); border:1px solid var(--line);}
 .modal-head{padding:16px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;}
 .modal-head h3{font-size:16px;}
@@ -144,6 +144,19 @@ fieldset legend{font-size:12px; font-weight:700; color:var(--navy); padding:0 4p
 .kanban-card .k-title{font-weight:700; margin-bottom:2px; font-size:13px;}
 .kanban-card select{margin-top:6px; font-size:12px; padding:6px 8px;}
 .kanban-card .rowflex{gap:12px;}
+.kanban-card{cursor:pointer;}
+.kanban-card .k-actions,.kanban-card select,.kanban-card .kanban-card-noopen{cursor:auto;}
+.badge-stale{display:inline-flex; align-items:center; gap:3px; padding:2px 8px; border-radius:100px; font-size:11px; font-weight:700; background:var(--warning-bg); color:var(--warning);}
+.badge-prob{display:inline-flex; align-items:center; padding:2px 8px; border-radius:100px; font-size:11px; font-weight:600; background:var(--accent-blue-bg); color:var(--tag-text);}
+.k-activity-icon{display:inline-block; width:1.2em; text-align:center;}
+
+/* ---------- Funil: barra de filtros + alternância kanban/lista ---------- */
+.funil-filterbar{display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; background:var(--surface); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); padding:12px 14px; margin-bottom:16px;}
+.funil-filterbar .field{min-width:150px;}
+.funil-filterbar .field.grow{flex:1; min-width:200px;}
+.viewtoggle{display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden;}
+.viewtoggle button{background:var(--surface); color:var(--text-soft); border:none; padding:8px 14px; font-size:12.5px; font-weight:600; cursor:pointer;}
+.viewtoggle button.active{background:var(--navy); color:#fff;}
 .iconbtn{background:none; border:none; color:var(--danger); cursor:pointer; font-size:16px; padding:6px;}
 .linklike{background:none; border:none; color:var(--navy); text-decoration:underline; cursor:pointer; font-size:12.5px; padding:0; font-weight:600;}
 @media (prefers-color-scheme: dark){ .linklike{color:#9db6d6;} }
@@ -153,6 +166,26 @@ fieldset legend{font-size:12px; font-weight:700; color:var(--navy); padding:0 4p
 .rowflex{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
 .muted{color:var(--text-soft);}
 .suggest-box{background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:12px; font-size:13px; white-space:pre-wrap; margin-top:10px; min-height:40px;}
+
+/* ---------- Painel de detalhes do negócio (funil) ---------- */
+.panel-backdrop{position:fixed; inset:0; background:rgba(13,20,32,.5); z-index:55;}
+.side-panel{position:fixed; top:0; right:0; bottom:0; width:min(460px,100vw); background:var(--surface); box-shadow:-12px 0 40px rgba(0,0,0,.25); z-index:56; display:flex; flex-direction:column; overflow-y:auto;}
+.side-panel-head{padding:18px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--surface); z-index:1;}
+.side-panel-head .rowflex{justify-content:space-between; flex-wrap:nowrap;}
+.side-panel-head h2{font-size:17px; margin-bottom:2px;}
+.side-panel-body{padding:18px 20px; display:grid; gap:18px;}
+.side-panel-section{display:grid; gap:8px;}
+.side-panel-section h4{font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-soft);}
+.panel-close{cursor:pointer; color:var(--text-soft); font-size:22px; line-height:1; background:none; border:none;}
+.stage-stepper{display:flex; gap:4px; flex-wrap:wrap;}
+.stage-step{flex:1; min-width:70px; text-align:center; padding:7px 4px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; background:var(--bg); border:1px solid var(--line); color:var(--text-soft);}
+.stage-step.done{background:var(--accent-blue-bg); color:var(--tag-text); border-color:var(--accent-blue);}
+.stage-step.current{background:var(--navy); color:#fff; border-color:var(--navy);}
+.kv-list{display:grid; gap:6px; font-size:13px;}
+.kv-list .kv-row{display:flex; justify-content:space-between; gap:10px;}
+.kv-list .kv-row .k{color:var(--text-soft);}
+.note-item,.activity-item{border:1px solid var(--line); border-radius:9px; padding:9px 10px; font-size:12.5px;}
+.note-item .meta,.activity-item .meta{color:var(--text-soft); font-size:11px; margin-top:3px;}
 
 /* ---------- Progresso de meta (funil) ---------- */
 .progress-track{width:100%; height:14px; border-radius:8px; background:rgba(172,166,152,.22); overflow:hidden;}
