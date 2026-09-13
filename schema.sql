@@ -427,3 +427,24 @@ create table if not exists lead_notas (
 );
 alter table lead_notas enable row level security;
 create policy "auth all lead_notas" on lead_notas for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+-- ========== BOLETOS: anexos, data de envio e conferência ==========
+alter table boletos_clientes add column if not exists data_envio_planejada date;
+alter table boletos_clientes add column if not exists valor_boleto numeric(12,2);
+alter table boletos_clientes add column if not exists boleto_arquivo_path text;
+alter table boletos_clientes add column if not exists demonstrativo_arquivo_path text;
+alter table boletos_clientes add column if not exists conferido boolean default false;
+
+-- Bucket privado pra guardar os PDFs do boleto e do demonstrativo analítico
+-- (só quem estiver logado consegue subir/ver — mesma regra das tabelas).
+insert into storage.buckets (id, name, public)
+values ('boletos', 'boletos', false)
+on conflict (id) do nothing;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where tablename = 'objects' and policyname = 'auth all boletos storage') then
+    create policy "auth all boletos storage" on storage.objects for all
+      using (bucket_id = 'boletos' and auth.role() = 'authenticated')
+      with check (bucket_id = 'boletos' and auth.role() = 'authenticated');
+  end if;
+end $$;

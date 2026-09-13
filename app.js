@@ -634,7 +634,7 @@ function viewClientes(){
       '<td>'+(c.status==="Cancelado"?'<span class="pill pill-bad">Cancelado</span>':'<span class="pill pill-ok">Ativo</span>')+'</td>'+
       '<td>'+(faixa? faixa.label+(faixa.nextChangeISO?'<br><span class="muted">muda '+fmtDateISO(faixa.nextChangeISO)+'</span>':'') : '—')+'</td>'+
       '<td>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</td>'+
-            '<td><button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button> <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button></td>'+
+            '<td><button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button></td>'+
     '</tr>';
   }).join(""))+
   '</tbody></table></div></div>';
@@ -896,30 +896,90 @@ function openClienteModal(existing, afterSave){
 /* ================= BOLETOS (envio mensal recorrente) =================
    Cliente com boleto_ativo=true tem um dia de vencimento fixo (boleto_dia_vencimento).
    Cada mês gera, sob demanda, um registro em boletos_clientes (mes_referencia "AAAA-MM")
-   guardando se o boleto daquele mês já foi enviado — histórico completo, mês a mês. */
+   guardando vencimento, data planejada de envio, valor conferido, anexos e se já foi
+   enviado — histórico completo, mês a mês. */
 function boletoDoMes(clienteId, mk){
   return state.boletos_clientes.filter(function(b){ return b.cliente_id===clienteId && b.mes_referencia===mk; })[0];
+}
+/* Sugestão de data de envio: 10 dias antes do vencimento, mas nunca cai em fim de semana
+   (Agatha só manda segunda e sexta) — se cair sábado ou domingo, volta pra sexta anterior,
+   nunca empurra pra frente, senão furaria os 10 dias de antecedência. Continua editável. */
+function sugerirDataEnvio(vencISO){
+  if(!vencISO) return null;
+  var d = addDaysISO(vencISO, -10);
+  var dow = parseISO(d).getDay(); // 0=domingo … 6=sábado
+  if(dow===6) d = addDaysISO(d, -1);
+  else if(dow===0) d = addDaysISO(d, -2);
+  return d;
+}
+/* Valor esperado do boleto = valor do contrato mantido no cadastro do cliente (é o campo
+   que a equipe já atualiza quando entra/sai beneficiário — não criamos um livro-razão novo). */
+function valorEsperadoCliente(c){ return c.valor_contrato_total || 0; }
+/* Teve alguma tarefa de Inclusão/Exclusão de beneficiário vencendo neste mês pra este cliente? */
+function clienteTeveAlteracaoNoMes(clienteId, mk){
+  return state.tarefas.some(function(t){
+    return t.cliente_id===clienteId && (t.tipo==="Inclusão"||t.tipo==="Exclusão") && t.data_vencimento && monthKeyFromISO(t.data_vencimento)===mk;
+  });
+}
+function conferenciaBadgeHtml(valorEsperado, valorBoleto){
+  if(valorBoleto==null || valorBoleto==="") return '<div class="muted" style="font-size:12px;">Informe o valor do boleto pra conferir.</div>';
+  var diff = Math.round((valorBoleto-valorEsperado)*100)/100;
+  if(Math.abs(diff)<0.01) return '<span class="pill pill-ok">✓ bate com o esperado</span>';
+  return '<span class="pill pill-bad">não bate — diferença de '+fmtMoney(Math.abs(diff))+(diff>0?" a mais":" a menor")+'</span>';
+}
+async function salvarCampoBoleto(cliente, mk, patch){
+  var b = boletoDoMes(cliente.id, mk);
+  if(b){ await dbUpdate("boletos_clientes", b.id, patch); }
+  else {
+    var venc = vencimentoDoMes(mk, cliente.boleto_dia_vencimento);
+    var data = Object.assign({cliente_id:cliente.id, mes_referencia:mk, data_vencimento:venc}, patch);
+    await dbInsert("boletos_clientes", data);
+  }
+  openBoletoModal(cliente, mk);
+}
+async function uploadBoletoAnexo(cliente, mk, tipo, file){
+  var ext = (file.name.split(".").pop()||"pdf").toLowerCase();
+  var path = cliente.id+"/"+mk+"/"+tipo+"."+ext;
+  var up = await sb.storage.from("boletos").upload(path, file, {upsert:true});
+  if(up.error){ toast("Erro ao enviar arquivo: "+up.error.message); return; }
+  var patch = {}; patch[tipo==="boleto"?"boleto_arquivo_path":"demonstrativo_arquivo_path"] = path;
+  await salvarCampoBoleto(cliente, mk, patch);
+}
+async function baixarBoletoAnexo(path){
+  var r = await sb.storage.from("boletos").createSignedUrl(path, 3600);
+  if(r.error || !r.data){ toast("Erro ao gerar link do arquivo."); return; }
+  window.open(r.data.signedUrl, "_blank");
+}
+function arquivoFieldHtml(prefix, path){
+  return '<div class="rowflex">'+
+    '<input type="file" accept="application/pdf,image/*" id="'+prefix+'-file">'+
+    (path? '<button type="button" class="linklike" data-baixar-anexo="'+escapeHtml(path)+'">baixar atual</button>' : '<span class="muted" style="font-size:12px;">nenhum arquivo ainda</span>')+
+  '</div>';
 }
 function viewBoletos(){
   var mk = todayMonthKey();
   var hoje = todayISO();
   var clientesBoleto = state.clientes.filter(function(c){ return c.boleto_ativo && c.status!=="Cancelado"; })
     .sort(function(a,b){ return (a.boleto_dia_vencimento||99)-(b.boleto_dia_vencimento||99); });
-  var header = '<div class="topbar"><div><h1>Boletos</h1><div class="desc">Envio mensal recorrente de boleto — '+monthLabel(mk)+'</div></div></div>';
+  var header = '<div class="topbar"><div><h1>Boletos</h1><div class="desc">Envio mensal recorrente de boleto — '+monthLabel(mk)+' · clique numa linha pra conferir, anexar e marcar como enviado</div></div></div>';
   if(clientesBoleto.length===0) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum cliente com envio de boleto ativo — marque "Enviamos boleto mensalmente" no cadastro do cliente (aba Clientes).</div></div></div>';
   var enviados = clientesBoleto.filter(function(c){ var b=boletoDoMes(c.id,mk); return b && b.enviado; }).length;
   return header + '<div class="card"><div class="card-head"><h2>'+monthLabel(mk)+'</h2><div class="meta">'+enviados+' de '+clientesBoleto.length+' enviados</div></div>'+
-    '<div class="tablewrap"><table class="grid"><thead><tr><th>Cliente</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody>'+
+    '<div class="tablewrap"><table class="grid"><thead><tr><th>Cliente</th><th>Vencimento</th><th>Envio planejado</th><th>Status</th><th>Anexos</th><th></th></tr></thead><tbody>'+
     clientesBoleto.map(function(c){
       var venc = vencimentoDoMes(mk, c.boleto_dia_vencimento);
       var b = boletoDoMes(c.id, mk);
       var enviado = !!(b && b.enviado);
-      var atrasado = !enviado && venc && venc<hoje;
-      return '<tr>'+
-        '<td>'+escapeHtml(clienteLabel(c))+'</td>'+
-        '<td>'+(venc? (atrasado? '<span class="pill pill-bad">'+fmtDateISO(venc)+'</span>' : fmtDateISO(venc)) : '<span class="muted">defina o dia no cadastro</span>')+'</td>'+
-        '<td>'+(enviado? '<span class="pill pill-ok">enviado'+(b.enviado_em? ' em '+fmtDateISO(b.enviado_em):'')+'</span>' : '<span class="pill pill-warn">pendente</span>')+'</td>'+
-        '<td>'+(enviado? '<button class="linklike" data-boleto-desfazer="'+c.id+'">desfazer</button>' : '<button class="linklike" data-boleto-marcar="'+c.id+'">marcar como enviado</button>')+' <button class="linklike" data-boleto-historico="'+c.id+'">histórico</button></td>'+
+      var envioPlanejado = (b && b.data_envio_planejada) || sugerirDataEnvio(venc);
+      var atrasado = !enviado && envioPlanejado && envioPlanejado<hoje;
+      var alerta = clienteTeveAlteracaoNoMes(c.id, mk);
+      return '<tr class="rowlink" data-abrir-boleto-linha="'+c.id+'" style="cursor:pointer;">'+
+        '<td>'+escapeHtml(clienteLabel(c))+(alerta? ' <span class="tag">alteração no mês</span>' : '')+'</td>'+
+        '<td>'+(venc? fmtDateISO(venc) : '<span class="muted">defina o dia no cadastro</span>')+'</td>'+
+        '<td>'+(envioPlanejado? (atrasado? '<span class="pill pill-bad">'+fmtDateISO(envioPlanejado)+'</span>' : fmtDateISO(envioPlanejado)) : '—')+'</td>'+
+        '<td>'+(enviado? '<span class="pill pill-ok">enviado'+(b.enviado_em? ' em '+fmtDateISO(b.enviado_em):'')+'</span>' : '<span class="pill pill-warn">pendente</span>')+(b&&b.conferido? ' <span class="pill pill-ok">conferido</span>' : '')+'</td>'+
+        '<td>'+(b&&b.boleto_arquivo_path?'📎':'—')+' '+(b&&b.demonstrativo_arquivo_path?'📎':'—')+'</td>'+
+        '<td><button class="linklike" data-boleto-historico="'+c.id+'">histórico</button></td>'+
         '</tr>';
     }).join("")+
     '</tbody></table></div></div>';
@@ -927,13 +987,76 @@ function viewBoletos(){
 function openBoletoHistoricoModal(cliente){
   var rows = state.boletos_clientes.filter(function(b){ return b.cliente_id===cliente.id; })
     .sort(function(a,b){ return (b.mes_referencia||"")<(a.mes_referencia||"")?-1:1; });
+  var mesAtual = todayMonthKey();
+  var meses = rows.map(function(b){ return b.mes_referencia; });
+  if(meses.indexOf(mesAtual)===-1) meses = [mesAtual].concat(meses);
   var body = '<fieldset><legend>Histórico de boletos'+(cliente.boleto_dia_vencimento? ' — vencimento todo dia '+cliente.boleto_dia_vencimento : '')+'</legend>'+
-    (rows.length===0? '<div class="empty">Nenhum boleto registrado ainda para este cliente.</div>' :
-    '<div class="tablewrap"><table class="grid"><thead><tr><th>Mês</th><th>Vencimento</th><th>Status</th></tr></thead><tbody>'+
-    rows.map(function(b){ return '<tr><td>'+monthLabel(b.mes_referencia)+'</td><td>'+fmtDateISO(b.data_vencimento)+'</td><td>'+(b.enviado?'<span class="pill pill-ok">enviado</span>':'<span class="pill pill-warn">pendente</span>')+'</td></tr>'; }).join("")+
-    '</tbody></table></div>')+
-    '</fieldset>';
+    '<div class="tablewrap"><table class="grid"><thead><tr><th>Mês</th><th>Vencimento</th><th>Status</th><th>Anexos</th><th></th></tr></thead><tbody>'+
+    meses.map(function(mk){
+      var b = rows.filter(function(x){ return x.mes_referencia===mk; })[0] || {};
+      var venc = b.data_vencimento || vencimentoDoMes(mk, cliente.boleto_dia_vencimento);
+      return '<tr>'+
+        '<td>'+monthLabel(mk)+'</td>'+
+        '<td>'+(venc? fmtDateISO(venc) : '—')+'</td>'+
+        '<td>'+(b.enviado? '<span class="pill pill-ok">enviado</span>' : '<span class="pill pill-warn">pendente</span>')+(b.conferido? ' <span class="pill pill-ok">conferido</span>' : '')+'</td>'+
+        '<td>'+(b.boleto_arquivo_path?'📎':'—')+' '+(b.demonstrativo_arquivo_path?'📎':'—')+'</td>'+
+        '<td><button class="linklike" data-abrir-boleto-mes="'+mk+'">abrir</button></td>'+
+        '</tr>';
+    }).join("")+
+    '</tbody></table></div></fieldset>';
   openModal("Histórico de boletos — "+clienteLabel(cliente), body, function(closeFn){ closeFn(); }, "Fechar");
+  Array.prototype.forEach.call(document.querySelectorAll("[data-abrir-boleto-mes]"), function(btn){
+    btn.onclick = function(){ openBoletoModal(cliente, btn.getAttribute("data-abrir-boleto-mes")); };
+  });
+}
+function openBoletoModal(cliente, mk){
+  var b = boletoDoMes(cliente.id, mk) || {};
+  var venc = b.data_vencimento || vencimentoDoMes(mk, cliente.boleto_dia_vencimento);
+  var sugestao = sugerirDataEnvio(venc);
+  var valorEsperado = valorEsperadoCliente(cliente);
+  var alerta = clienteTeveAlteracaoNoMes(cliente.id, mk);
+  var body =
+    '<div class="field row2"><div class="field"><label>Mês de referência</label><input value="'+monthLabel(mk)+'" disabled></div><div class="field"><label>Vencimento</label><input value="'+(venc? fmtDateISO(venc) : "—")+'" disabled></div></div>'+
+    '<div class="field"><label>Data planejada de envio (segunda ou sexta)</label><input type="date" id="bm-envio" value="'+(b.data_envio_planejada||sugestao||"")+'"></div>'+
+    (alerta? '<div class="helpbox">⚠️ Teve inclusão/exclusão de beneficiário registrada neste mês — confira o valor com atenção.</div>' : '')+
+    '<div class="field row2">'+
+      '<div class="field"><label>Valor esperado (cadastro do cliente)</label><input value="'+moneyDisplay(valorEsperado)+'" disabled></div>'+
+      moneyFieldHtml("bm-valor-boleto", b.valor_boleto, "Valor do boleto baixado (R$)")+
+    '</div>'+
+    '<div id="bm-conferencia" style="margin:-6px 0 10px;">'+conferenciaBadgeHtml(valorEsperado, b.valor_boleto)+'</div>'+
+    '<fieldset><legend>Anexos (baixados do site da operadora)</legend>'+
+      '<div class="field"><label>Boleto (PDF)</label>'+arquivoFieldHtml("bm-boleto", b.boleto_arquivo_path)+'</div>'+
+      '<div class="field"><label>Demonstrativo analítico (PDF)</label>'+arquivoFieldHtml("bm-demonstrativo", b.demonstrativo_arquivo_path)+'</div>'+
+    '</fieldset>'+
+    '<label class="rowflex" style="font-weight:400;"><input type="checkbox" id="bm-conferido" '+(b.conferido?"checked":"")+'> Conferi o valor e está tudo certo</label>'+
+    '<label class="rowflex" style="font-weight:400;margin-top:6px;"><input type="checkbox" id="bm-enviado" '+(b.enviado?"checked":"")+'> Já enviei este boleto pro cliente no WhatsApp</label>';
+
+  openModal("Boleto — "+monthLabel(mk)+" · "+clienteLabel(cliente), body, function(closeFn){ closeFn(); }, "Fechar");
+
+  var valorBoletoEl = document.getElementById("bm-valor-boleto");
+  if(valorBoletoEl){
+    valorBoletoEl.addEventListener("input", function(){
+      var v = valorBoletoEl.value===""? null : parseMoneyBR(valorBoletoEl.value);
+      document.getElementById("bm-conferencia").innerHTML = conferenciaBadgeHtml(valorEsperado, v);
+    });
+    valorBoletoEl.addEventListener("blur", function(){
+      var v = valorBoletoEl.value===""? null : parseMoneyBR(valorBoletoEl.value);
+      salvarCampoBoleto(cliente, mk, {valor_boleto:v});
+    });
+  }
+  var envioEl = document.getElementById("bm-envio");
+  if(envioEl) envioEl.addEventListener("change", function(){ salvarCampoBoleto(cliente, mk, {data_envio_planejada: envioEl.value||null}); });
+  var conferidoEl = document.getElementById("bm-conferido");
+  if(conferidoEl) conferidoEl.addEventListener("change", function(){ salvarCampoBoleto(cliente, mk, {conferido: conferidoEl.checked}); });
+  var enviadoEl = document.getElementById("bm-enviado");
+  if(enviadoEl) enviadoEl.addEventListener("change", function(){ salvarCampoBoleto(cliente, mk, {enviado: enviadoEl.checked, enviado_em: enviadoEl.checked? new Date().toISOString() : null}); });
+  var boletoFileEl = document.getElementById("bm-boleto-file");
+  if(boletoFileEl) boletoFileEl.addEventListener("change", function(){ if(boletoFileEl.files[0]) uploadBoletoAnexo(cliente, mk, "boleto", boletoFileEl.files[0]); });
+  var demoFileEl = document.getElementById("bm-demonstrativo-file");
+  if(demoFileEl) demoFileEl.addEventListener("change", function(){ if(demoFileEl.files[0]) uploadBoletoAnexo(cliente, mk, "demonstrativo", demoFileEl.files[0]); });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-baixar-anexo]"), function(btn){
+    btn.onclick = function(){ baixarBoletoAnexo(btn.getAttribute("data-baixar-anexo")); };
+  });
 }
 
 /* ================= CLIENTES: Excel (importar / exportar) ================= */
@@ -2254,30 +2377,19 @@ function wireActions(){
   Array.prototype.forEach.call(document.querySelectorAll("[data-finalizar-implantacao]"), function(btn){
     btn.onclick = function(){ finalizarImplantacao(btn.getAttribute("data-finalizar-implantacao")); };
   });
-  Array.prototype.forEach.call(document.querySelectorAll("[data-boleto-marcar]"), function(btn){
+  Array.prototype.forEach.call(document.querySelectorAll("[data-boleto-historico],[data-boleto-cliente]"), function(btn){
     btn.onclick = function(){
-      var clienteId = btn.getAttribute("data-boleto-marcar");
-      var mk = todayMonthKey();
-      var c = state.clientes.filter(function(x){return x.id===clienteId;})[0];
-      var venc = c ? vencimentoDoMes(mk, c.boleto_dia_vencimento) : null;
-      var b = boletoDoMes(clienteId, mk);
-      var patch = {enviado:true, enviado_em:new Date().toISOString()};
-      if(b) dbUpdate("boletos_clientes", b.id, patch);
-      else { patch.cliente_id=clienteId; patch.mes_referencia=mk; patch.data_vencimento=venc; dbInsert("boletos_clientes", patch); }
-    };
-  });
-  Array.prototype.forEach.call(document.querySelectorAll("[data-boleto-desfazer]"), function(btn){
-    btn.onclick = function(){
-      var clienteId = btn.getAttribute("data-boleto-desfazer");
-      var b = boletoDoMes(clienteId, todayMonthKey());
-      if(b) dbUpdate("boletos_clientes", b.id, {enviado:false, enviado_em:null});
-    };
-  });
-  Array.prototype.forEach.call(document.querySelectorAll("[data-boleto-historico]"), function(btn){
-    btn.onclick = function(){
-      var c = state.clientes.filter(function(x){return x.id===btn.getAttribute("data-boleto-historico");})[0];
+      var id = btn.getAttribute("data-boleto-historico") || btn.getAttribute("data-boleto-cliente");
+      var c = state.clientes.filter(function(x){return x.id===id;})[0];
       if(c) openBoletoHistoricoModal(c);
     };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-abrir-boleto-linha]"), function(tr){
+    tr.addEventListener("click", function(e){
+      if(e.target.closest("button")) return;
+      var c = state.clientes.filter(function(x){return x.id===tr.getAttribute("data-abrir-boleto-linha");})[0];
+      if(c) openBoletoModal(c, todayMonthKey());
+    });
   });
   var btnSalvarMeta = document.getElementById("btn-salvar-meta");
   if(btnSalvarMeta) btnSalvarMeta.onclick = async function(){
