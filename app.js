@@ -15,9 +15,6 @@ var TEAM = ["Henrique","Alana","Agatha","Kelly"];
 var VENDEDORES = ["Henrique","Alana"];
 var PRODUTOS = ["Saúde","Vida","Consórcio"];
 var ETAPAS = ["Qualificação","Primeiro Contato","Proposta Enviada","Negociação","Ganho","Perdido"];
-/* Probabilidade padrão de fechamento por etapa (estilo Pipedrive) — usada pra calcular o
-   "valor ponderado" do funil. Cada negócio pode sobrescrever isso no campo probabilidade. */
-var ETAPA_PROBABILIDADE = {"Qualificação":20,"Primeiro Contato":40,"Proposta Enviada":60,"Negociação":80,"Ganho":100,"Perdido":0};
 var LIMITE_DIAS_PARADO = 14; // acima disso o cartão ganha o selo de "negócio parado"
 var MOTIVOS_PERDA = ["Preço","Concorrência","Sem retorno do cliente","Desistiu","Outro"];
 var OPERADORAS = ["Omint","Care Plus","Amil","SulAmérica","Bradesco","NotreDame","Prevent Sênior","MedSênior","Porto Seguro","São Cristóvão","Ever","Alice","Outros"];
@@ -1286,13 +1283,6 @@ function notasDoLead(leadId){
   return state.lead_notas.filter(function(n){ return n.lead_id===leadId; })
     .sort(function(a,b){ return (a.criado_em||"")<(b.criado_em||"")?1:-1; });
 }
-/* Probabilidade de fechamento do negócio: usa o valor manual se tiver sido definido,
-   senão cai no padrão da etapa (ETAPA_PROBABILIDADE). */
-function probabilidadeDoLead(l){
-  if(l.probabilidade!=null && l.probabilidade!=="") return Number(l.probabilidade);
-  return ETAPA_PROBABILIDADE[l.etapa]!=null ? ETAPA_PROBABILIDADE[l.etapa] : 0;
-}
-function valorPonderadoLead(l){ return (l.valor_estimado||0) * probabilidadeDoLead(l)/100; }
 /* Data da última "coisa que aconteceu" no negócio: mudança de etapa, atividade criada/
    concluída ou nota — usada pro selo de negócio parado (estilo "rotten deal" do Pipedrive). */
 function ultimaMovimentacaoLead(l){
@@ -1453,12 +1443,10 @@ function viewFunil(){
 
   var abertosFiltrados = leadsBase.filter(function(l){ return l.etapa!=="Ganho" && l.etapa!=="Perdido"; });
   var valorAberto = abertosFiltrados.reduce(function(s,l){ return s+(l.valor_estimado||0); },0);
-  var valorPonderado = abertosFiltrados.reduce(function(s,l){ return s+valorPonderadoLead(l); },0);
 
   var pipeTiles = '<div class="tiles">'+
     tile("Negócios ganhos — "+monthLabel(mesAtual), vendasQtdMes, metaQtd? (faltamQtd>0? "Faltam "+faltamQtd+" para a meta de "+metaQtd : "Meta de "+metaQtd+" atingida! 🎉") : "Defina a meta (quantidade) em Parâmetros")+
     tile("Valor em aberto no funil", fmtMoney(valorAberto), abertosFiltrados.length+" oportunidade(s)")+
-    tile("Valor ponderado (previsão)", fmtMoney(valorPonderado), "pela probabilidade de cada etapa")+
     tile("Tarefas do funil atrasadas", tarefasAtrasadas.length, tarefasAtrasadas.length? "Veja a lista abaixo" : "Tudo em dia")+
   '</div>';
 
@@ -1485,8 +1473,7 @@ function viewFunilKanban(byEtapa, agoraISO){
   return '<div class="kanban-board">'+ETAPAS_PIPELINE.map(function(etapa){
     var items = byEtapa[etapa]||[];
     var total = items.reduce(function(s,l){return s+(l.valor_estimado||0);},0);
-    var ponderado = items.reduce(function(s,l){return s+valorPonderadoLead(l);},0);
-    return '<div class="kanban-col"><div class="kanban-col-head"><h3>'+etapa+'</h3><div class="meta">'+items.length+' · '+fmtMoney(total)+' <span class="muted">('+fmtMoney(ponderado)+' pond.)</span></div></div>'+
+    return '<div class="kanban-col"><div class="kanban-col-head"><h3>'+etapa+'</h3><div class="meta">'+items.length+' · '+fmtMoney(total)+'</div></div>'+
       '<div class="kanban-col-body" data-drop-etapa="'+etapa+'">'+
       (items.length===0? '<div class="empty" style="padding:16px 6px;">Nenhuma oportunidade.</div>' :
       items.map(function(l){
@@ -1496,7 +1483,6 @@ function viewFunilKanban(byEtapa, agoraISO){
           '<div class="muted">'+escapeHtml(l.produto||"—")+' · '+escapeHtml(l.vendedor||"—")+'</div>'+
           '<div class="rowflex" style="margin-top:4px;gap:6px;">'+
             (operadoraTag(l)||'')+
-            '<span class="badge-prob">'+probabilidadeDoLead(l)+'%</span>'+
             (parado>LIMITE_DIAS_PARADO? '<span class="badge-stale">🔥 parado '+parado+'d</span>' : '')+
           '</div>'+
           '<div style="margin-top:4px;font-weight:600;">'+fmtMoney(l.valor_estimado)+'</div>'+
@@ -1516,7 +1502,7 @@ function viewFunilLista(leads, agoraISO){
   if(!leads.length) return '<div class="card"><div class="card-body"><div class="empty">Nenhuma oportunidade encontrada com esses filtros.</div></div></div>';
   var ordenados = leads.slice().sort(function(a,b){ return (b.valor_estimado||0)-(a.valor_estimado||0); });
   return '<div class="card"><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
-    '<th>Nome / Empresa</th><th>Produto</th><th>Vendedor(a)</th><th>Etapa</th><th>Valor</th><th>Ponderado</th><th>Próxima atividade</th><th>Parado</th>'+
+    '<th>Nome / Empresa</th><th>Produto</th><th>Vendedor(a)</th><th>Etapa</th><th>Valor</th><th>Próxima atividade</th><th>Parado</th>'+
     '</tr></thead><tbody>'+
     ordenados.map(function(l){
       var proximas = tarefasAbertasDoLead(l.id);
@@ -1528,7 +1514,6 @@ function viewFunilLista(leads, agoraISO){
         '<td>'+escapeHtml(l.vendedor||"—")+'</td>'+
         '<td><span class="tag">'+escapeHtml(l.etapa||"—")+'</span></td>'+
         '<td>'+fmtMoney(l.valor_estimado)+'</td>'+
-        '<td>'+fmtMoney(valorPonderadoLead(l))+'</td>'+
         '<td>'+(proxima? escapeHtml(proxima.titulo)+' — '+fmtDateTime(proxima.vencimento_em) : '—')+'</td>'+
         '<td>'+(parado>LIMITE_DIAS_PARADO? '<span class="badge-stale">🔥 '+parado+'d</span>' : parado+'d')+'</td>'+
       '</tr>';
@@ -1574,8 +1559,7 @@ function leadFormHtml(l){
       OPERADORAS.map(function(o){ return '<option'+(operadoraAtual===o?' selected':'')+'>'+o+'</option>'; }).join("")+
     '</select></div></div>'+
   '<div class="field" id="l-operadora-outros-wrap" style="'+(operadoraAtual==="Outros"?"":"display:none;")+'"><label>Qual operadora?</label><input id="l-operadora-outros" value="'+escapeHtml(operadoraOutrosValor)+'"></div>'+
-  '<div class="field row2"><div class="field"><label>Etapa</label><select id="l-etapa">'+ETAPAS.map(function(e){return '<option'+(l.etapa===e?' selected':'')+'>'+e+'</option>';}).join("")+'</select></div>'+
-    '<div class="field"><label>Probabilidade de fechamento (%)</label><input type="number" min="0" max="100" id="l-prob" placeholder="padrão da etapa: '+(ETAPA_PROBABILIDADE[l.etapa]!=null?ETAPA_PROBABILIDADE[l.etapa]:0)+'%" value="'+(l.probabilidade!=null?l.probabilidade:"")+'"></div></div>'+
+  '<div class="field"><label>Etapa</label><select id="l-etapa">'+ETAPAS.map(function(e){return '<option'+(l.etapa===e?' selected':'')+'>'+e+'</option>';}).join("")+'</select></div>'+
   '<div class="field" id="l-motivo-perda-wrap" style="'+(l.etapa==="Perdido"?"":"display:none;")+'"><label>Motivo da perda</label><input id="l-motivo-perda" value="'+escapeHtml(l.motivo_perda||"")+'"></div>'+
   '<div class="field"><label>Observações</label><textarea id="l-obs">'+escapeHtml(l.observacoes||"")+'</textarea></div>';
 }
@@ -1597,7 +1581,6 @@ function openLeadModal(existing, onSaved){
     var operadoraOutros = document.getElementById("l-operadora-outros");
     var operadoraFinal = operadoraSel==="Outros" ? (operadoraOutros? operadoraOutros.value.trim() : "") : operadoraSel;
     var novaEtapa = document.getElementById("l-etapa").value;
-    var probInput = document.getElementById("l-prob").value;
     var motivoEl = document.getElementById("l-motivo-perda");
     var data = {
       nome: document.getElementById("l-nome").value.trim(),
@@ -1609,7 +1592,6 @@ function openLeadModal(existing, onSaved){
       operadora: operadoraFinal,
       origem: document.getElementById("l-origem").value.trim(),
       etapa: novaEtapa,
-      probabilidade: probInput===""? null : Math.max(0,Math.min(100,parseFloat(probInput))),
       motivo_perda: novaEtapa==="Perdido" ? (motivoEl? motivoEl.value.trim() : "") : null,
       observacoes: document.getElementById("l-obs").value.trim()
     };
@@ -1635,8 +1617,6 @@ function openLeadDetailPanel(leadId){
   var root = document.getElementById("panel-root");
   if(!root) return;
   if(!lead){ root.innerHTML=""; return; }
-  var prob = probabilidadeDoLead(lead);
-  var ponderado = valorPonderadoLead(lead);
   var parado = diasParado(lead);
   var etapasStepper = ETAPAS.filter(function(e){ return e!=="Perdido"; });
   var curIdx = etapasStepper.indexOf(lead.etapa);
@@ -1659,8 +1639,6 @@ function openLeadDetailPanel(leadId){
         '<h4>Negócio</h4>'+
         '<div class="kv-list">'+
           '<div class="kv-row"><span class="k">Valor</span><span><b>'+fmtMoney(lead.valor_estimado)+'</b></span></div>'+
-          '<div class="kv-row"><span class="k">Probabilidade</span><span>'+prob+'%</span></div>'+
-          '<div class="kv-row"><span class="k">Valor ponderado</span><span>'+fmtMoney(ponderado)+'</span></div>'+
           (lead.operadora? '<div class="kv-row"><span class="k">Operadora</span><span>'+escapeHtml(lead.operadora)+'</span></div>' : '')+
           (lead.quantidade_vidas? '<div class="kv-row"><span class="k">Vidas</span><span>'+lead.quantidade_vidas+'</span></div>' : '')+
           (lead.origem? '<div class="kv-row"><span class="k">Origem</span><span>'+escapeHtml(lead.origem)+'</span></div>' : '')+
