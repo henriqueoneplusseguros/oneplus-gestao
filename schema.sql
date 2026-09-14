@@ -448,3 +448,6 @@ do $$ begin
       with check (bucket_id = 'boletos' and auth.role() = 'authenticated');
   end if;
 end $$;
+
+-- ========== CLIENTES: responsável financeiro (quem recebe o boleto) ==========
+alter table clientes add column if not exists responsavel_financeiro text;

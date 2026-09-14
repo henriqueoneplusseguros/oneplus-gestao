@@ -81,6 +81,23 @@ function parseMoneyBR(str){
   return isNaN(v) ? 0 : v;
 }
 function moneyDisplay(v){ if(v==null || v==="" || isNaN(v)) return ""; return fmtMoney(v).replace("R$ ",""); }
+/* Máscara de CNPJ (00.000.000/0000-00) e CPF (000.000.000-00) — formata enquanto digita,
+   sempre a partir só dos dígitos (cola de qualquer jeito que a pessoa digitar/colar). */
+function maskCNPJ(v){
+  var d = String(v||"").replace(/\D/g,"").slice(0,14);
+  d = d.replace(/^(\d{2})(\d)/,"$1.$2");
+  d = d.replace(/^(\d{2})\.(\d{3})(\d)/,"$1.$2.$3");
+  d = d.replace(/\.(\d{3})(\d)/,".$1/$2");
+  d = d.replace(/(\d{4})(\d)/,"$1-$2");
+  return d;
+}
+function maskCPF(v){
+  var d = String(v||"").replace(/\D/g,"").slice(0,11);
+  d = d.replace(/(\d{3})(\d)/,"$1.$2");
+  d = d.replace(/(\d{3})(\d)/,"$1.$2");
+  d = d.replace(/(\d{3})(\d{1,2})$/,"$1-$2");
+  return d;
+}
 /* Campo de dinheiro em texto (aceita vírgula), formatado ao perder o foco. */
 function moneyFieldHtml(id, value, label, extraAttrs){
   return '<div class="field"><label>'+label+'</label><input type="text" inputmode="decimal" class="money-input" id="'+id+'" value="'+escapeHtml(moneyDisplay(value))+'" placeholder="0,00" '+(extraAttrs||"")+'></div>';
@@ -618,19 +635,24 @@ function viewClientes(){
   '</div></div>'+
   '<div class="rowflex" style="margin-bottom:14px;"><input style="max-width:300px" placeholder="Buscar por nome, razão social, CNPJ ou CPF…" id="cli-search" value="'+escapeHtml(clientesFilter)+'"></div>'+
   '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr>'+
-    '<th>Cliente</th><th>Plano</th><th>Vendedor(a)</th><th>Vigência</th><th class="num">Valor contrato</th><th>Status</th><th>Faixa etária (titular)</th><th>Revisão</th><th></th>'+
+    '<th>Cliente</th><th>Contato</th><th>Plano</th><th>Vendedor(a)</th><th>Vigência</th><th class="num">Valor contrato</th><th>Vidas</th><th>Status</th><th>Faixa etária (titular)</th><th>Revisão</th><th></th>'+
   '</tr></thead><tbody>'+
-  (list.length===0? '<tr><td colspan="9"><div class="empty">Nenhum cliente cadastrado ainda.</div></td></tr>' :
+  (list.length===0? '<tr><td colspan="11"><div class="empty">Nenhum cliente cadastrado ainda.</div></td></tr>' :
   list.map(function(c){
     var faixa = computeFaixa(c.data_nascimento);
     var rev = nextRevisao(c);
-    var nDeps = depsOf(c.id).length;
+    var deps = depsOf(c.id);
+    var nTitularesExtra = deps.filter(function(d){ return d.tipo==="Titular adicional"; }).length;
+    var nDeps = deps.length - nTitularesExtra;
+    var nVidas = 1 + deps.length;
     return '<tr>'+
-      '<td><b>'+escapeHtml(clienteLabel(c))+'</b><br><span class="muted">'+escapeHtml(c.cnpj_cpf||c.cpf||"")+(nDeps? ' · '+nDeps+' dep.':'')+'</span>'+(c.boleto_ativo? ' <span class="tag">Boleto dia '+(c.boleto_dia_vencimento||"?")+'</span>' : '')+'</td>'+
+      '<td><b>'+escapeHtml(clienteLabel(c))+'</b>'+(c.razao_social && c.titular_nome? '<br><span class="muted">'+escapeHtml(c.razao_social)+'</span>' : '')+'<br><span class="muted">'+escapeHtml(c.cnpj_cpf||c.cpf||"")+'</span>'+(c.boleto_ativo? ' <span class="tag">Boleto dia '+(c.boleto_dia_vencimento||"?")+'</span>' : '')+'</td>'+
+      '<td>'+(c.responsavel_financeiro? escapeHtml(c.responsavel_financeiro)+'<br>':'')+'<span class="muted">'+escapeHtml(c.telefone||"—")+'</span></td>'+
       '<td>'+escapeHtml(c.plano_nome||c.produto||"—")+'</td>'+
       '<td>'+escapeHtml(c.vendedor||"—")+'</td>'+
       '<td>'+fmtDateISO(c.vigencia_inicio)+(c.vigencia_fim? ' – '+fmtDateISO(c.vigencia_fim):'')+'</td>'+
       '<td class="num">'+fmtMoney(c.valor_contrato_total)+'</td>'+
+      '<td>'+nVidas+' <span class="muted">('+(1+nTitularesExtra)+' titular'+((1+nTitularesExtra)===1?'':'es')+' · '+nDeps+' dep.)</span></td>'+
       '<td>'+(c.status==="Cancelado"?'<span class="pill pill-bad">Cancelado</span>':'<span class="pill pill-ok">Ativo</span>')+'</td>'+
       '<td>'+(faixa? faixa.label+(faixa.nextChangeISO?'<br><span class="muted">muda '+fmtDateISO(faixa.nextChangeISO)+'</span>':'') : '—')+'</td>'+
       '<td>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</td>'+
@@ -647,8 +669,10 @@ function clienteFormHtml(c, deps){
   return ''+
   '<fieldset><legend>Titular</legend>'+
   '<div class="field row2"><div class="field"><label>Nome do titular</label><input id="f-titular" value="'+escapeHtml(c.titular_nome||"")+'"></div><div class="field"><label>Razão social (se PJ)</label><input id="f-razao" value="'+escapeHtml(c.razao_social||"")+'"></div></div>'+
-  '<div class="field row3"><div class="field"><label>CNPJ (empresa)</label><input id="f-cnpj" value="'+escapeHtml(c.cnpj_cpf||"")+'"></div><div class="field"><label>CPF (titular)</label><input id="f-cpf" value="'+escapeHtml(c.cpf||"")+'"></div><div class="field"><label>Data de nascimento <span id="f-idade-out" class="muted"></span></label><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"></div></div>'+
-  '<div class="field row3"><div class="field"><label>E-mail</label><input type="email" id="f-email" value="'+escapeHtml(c.email||"")+'"></div><div class="field"><label>Telefone</label><input id="f-telefone" value="'+escapeHtml(c.telefone||"")+'"></div><div class="field"><label>Nº da carteirinha</label><input id="f-carteirinha" value="'+escapeHtml(c.numero_carteirinha||"")+'"></div></div>'+
+  '<div class="field row3"><div class="field"><label>CNPJ (empresa)</label><input id="f-cnpj" value="'+escapeHtml(c.cnpj_cpf||"")+'" placeholder="00.000.000/0000-00" maxlength="18"></div><div class="field"><label>CPF (titular)</label><input id="f-cpf" value="'+escapeHtml(c.cpf||"")+'" placeholder="000.000.000-00" maxlength="14"></div><div class="field"><label>Data de nascimento <span id="f-idade-out" class="muted"></span></label><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"></div></div>'+
+  '<div class="muted" id="f-cnpj-status" style="font-size:11.5px;"></div>'+
+  '<div class="field row3"><div class="field"><label>E-mail</label><input type="email" id="f-email" value="'+escapeHtml(c.email||"")+'"></div><div class="field"><label>Telefone (WhatsApp)</label><input id="f-telefone" value="'+escapeHtml(c.telefone||"")+'"></div><div class="field"><label>Nº da carteirinha</label><input id="f-carteirinha" value="'+escapeHtml(c.numero_carteirinha||"")+'"></div></div>'+
+  '<div class="field"><label>Responsável financeiro (quem recebe o boleto, se for diferente do titular)</label><input id="f-resp-financeiro" value="'+escapeHtml(c.responsavel_financeiro||"")+'" placeholder="ex: nome de quem cuida do financeiro na empresa"></div>'+
   '</fieldset>'+
   '<fieldset><legend>Endereço</legend>'+
   '<div class="field row3"><div class="field"><label>CEP</label><input id="f-cep" value="'+escapeHtml(c.cep||"")+'" placeholder="00000-000" maxlength="9"></div><div class="field"><label>Número</label><input id="f-end-numero" value="'+escapeHtml(c.endereco_numero||"")+'"></div><div class="field"><label>Complemento (apto/bloco)</label><input id="f-end-compl" value="'+escapeHtml(c.endereco_complemento||"")+'"></div></div>'+
@@ -725,6 +749,30 @@ function wireClienteFormExtra(){
     elIdadeOut.textContent = "("+idade+" ano"+(idade===1?"":"s")+")";
   }
   if(elNasc){ elNasc.addEventListener("input", updateIdade); updateIdade(); }
+
+  var elCnpj = document.getElementById("f-cnpj");
+  var elCnpjStatus = document.getElementById("f-cnpj-status");
+  if(elCnpj){
+    elCnpj.addEventListener("input", function(){ elCnpj.value = maskCNPJ(elCnpj.value); });
+    elCnpj.addEventListener("blur", async function(){
+      var digits = elCnpj.value.replace(/\D/g,"");
+      if(digits.length !== 14){ return; }
+      elCnpjStatus.textContent = "Buscando empresa na Receita Federal…";
+      try{
+        var resp = await fetch("https://brasilapi.com.br/api/cnpj/v1/"+digits);
+        if(!resp.ok){ elCnpjStatus.textContent = "CNPJ não encontrado."; return; }
+        var data = await resp.json();
+        var elRazao = document.getElementById("f-razao");
+        if(elRazao && !elRazao.value.trim()) elRazao.value = data.razao_social || data.nome_fantasia || "";
+        elCnpjStatus.textContent = "Empresa encontrada: "+(data.razao_social||data.nome_fantasia||"—")+" — confira os demais dados.";
+      }catch(e){
+        console.error(e);
+        elCnpjStatus.textContent = "Não foi possível buscar o CNPJ agora — preencha manualmente.";
+      }
+    });
+  }
+  var elCpf = document.getElementById("f-cpf");
+  if(elCpf){ elCpf.addEventListener("input", function(){ elCpf.value = maskCPF(elCpf.value); }); }
 
   var elCep = document.getElementById("f-cep");
   var elCepStatus = document.getElementById("f-cep-status");
@@ -823,6 +871,7 @@ function readClienteForm(){
       razao_social: document.getElementById("f-razao").value.trim(),
       cnpj_cpf: document.getElementById("f-cnpj").value.trim(),
       cpf: document.getElementById("f-cpf").value.trim(),
+      responsavel_financeiro: document.getElementById("f-resp-financeiro").value.trim(),
       data_nascimento: document.getElementById("f-nasc").value || null,
       email: document.getElementById("f-email").value.trim(),
       telefone: document.getElementById("f-telefone").value.trim(),
@@ -1819,43 +1868,110 @@ function openLeadDetailPanel(leadId){
 /* ================= IMPLANTAÇÃO ================= */
 function clienteDoLead(leadId){ return state.clientes.filter(function(c){ return c.lead_id===leadId; })[0]; }
 function implantacaoDoLead(leadId){ return state.implantacoes.filter(function(i){ return i.lead_id===leadId; })[0]; }
+var IMPLANTACAO_ETAPAS = ["A fazer","Documentos solicitados","Enviado à operadora","Confirmado pela operadora"];
+function estagioImplantacao(imp){
+  imp = imp || {};
+  if(imp.implantacao_confirmada) return 3;
+  if(imp.subiu_operadora) return 2;
+  if(imp.documentos_solicitados) return 1;
+  return 0;
+}
+async function setEstagioImplantacao(leadId, estagio){
+  var imp = implantacaoDoLead(leadId);
+  var patch = {documentos_solicitados: estagio>=1, subiu_operadora: estagio>=2, implantacao_confirmada: estagio>=3};
+  if(imp){ await dbUpdate("implantacoes", imp.id, patch); }
+  else { patch.lead_id=leadId; patch.responsavel="Kelly"; await dbInsert("implantacoes", patch); }
+}
 function viewImplantacao(){
   var ganhos = state.leads.filter(function(l){
     if(l.etapa!=="Ganho") return false;
     var imp = implantacaoDoLead(l.id);
     return !(imp && imp.concluida);
   }).sort(function(a,b){ return (b.data_ganho||"")<(a.data_ganho||"")?-1:1; });
-  var header = '<div class="topbar"><div><h1>Implantação</h1><div class="desc">Negócios ganhos — documentação, acompanhamento com a operadora, boas-vindas e boleto · implantações concluídas somem daqui e continuam em Clientes</div></div></div>';
+  var header = '<div class="topbar"><div><h1>Implantação</h1><div class="desc">Negócios ganhos — arraste o cartão (ou clique nele) · implantações concluídas somem daqui e continuam em Clientes</div></div></div>';
   if(ganhos.length===0) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum negócio ganho ainda — assim que marcar um negócio como "Ganho" no funil, ele aparece aqui.</div></div></div>';
-  var mesAtual = todayMonthKey();
-  var cards = ganhos.map(function(l){
-    var imp = implantacaoDoLead(l.id) || {};
-    var cli = clienteDoLead(l.id);
-    var boletoEmDia = imp.boleto_mes_referencia === mesAtual;
-    var pronta = !!(imp.documentos_solicitados && imp.subiu_operadora && imp.implantacao_confirmada);
-    return '<div class="card"><div class="card-head"><h2>'+escapeHtml(l.nome||l.empresa||"—")+'</h2><div class="meta">'+fmtMoney(l.valor_estimado)+(l.data_ganho? ' · ganho em '+fmtDateISO(l.data_ganho):'')+' · <button class="linklike" data-edit-lead="'+l.id+'">editar negócio</button></div></div>'+
-      '<div class="card-body">'+
-      (operadoraTag(l)? '<div style="margin-bottom:10px;">'+operadoraTag(l)+'</div>' : '')+
-      '<div class="helpbox">'+(cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' : '⚠️ Cadastro do cliente ainda não foi concluído.'+' <button class="linklike" data-convert-lead="'+l.id+'">completar cadastro</button>')+'</div>'+
-      '<div class="field row3">'+
-        '<label class="rowflex" style="font-weight:400;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="documentos_solicitados" '+(imp.documentos_solicitados?'checked':'')+'> Relação de documentos solicitada</label>'+
-        '<label class="rowflex" style="font-weight:400;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="subiu_operadora" '+(imp.subiu_operadora?'checked':'')+'> Documentos enviados à operadora</label>'+
-        '<label class="rowflex" style="font-weight:400;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="implantacao_confirmada" '+(imp.implantacao_confirmada?'checked':'')+'> Implantação confirmada pela operadora</label>'+
-      '</div>'+
-      '<div class="field row2"><div class="field"><label>Responsável</label><select class="imp-resp" data-imp-lead="'+l.id+'">'+TEAM.map(function(t){return '<option'+((imp.responsavel||"Kelly")===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div><div class="field"></div></div>'+
-      '<div class="field"><label>Observações do acompanhamento</label><textarea class="imp-obs" data-imp-lead="'+l.id+'">'+escapeHtml(imp.observacoes||"")+'</textarea></div>'+
-      (pronta? (
-        '<div style="border-top:1px solid var(--line); margin-top:10px; padding-top:10px;">'+
-        '<label class="rowflex" style="font-weight:400;margin-bottom:8px;"><input type="checkbox" class="imp-check" data-imp-lead="'+l.id+'" data-field="boas_vindas_enviada" '+(imp.boas_vindas_enviada?'checked':'')+'> Mensagem de boas-vindas enviada</label>'+
-        '<div class="rowflex"><span>Boleto de '+monthLabel(mesAtual)+': '+(boletoEmDia? '<span class="pill pill-ok">enviado</span>' : '<span class="pill pill-warn">pendente</span>')+'</span>'+
-        (boletoEmDia? '' : '<button class="linklike" data-boleto-enviado="'+l.id+'">marcar como enviado</button>')+
-        '</div>'+
-        '<div class="rowflex" style="margin-top:12px;"><button class="btn btn-primary" data-finalizar-implantacao="'+l.id+'">✅ Concluir implantação e mover para Clientes</button></div>'+
-        '</div>'
-      ) : '<div class="muted" style="font-size:12px;margin-top:4px;">Marque os 3 passos acima para liberar boas-vindas e o controle de boleto mensal.</div>')+
+  var byEstagio = [[],[],[],[]];
+  ganhos.forEach(function(l){ byEstagio[estagioImplantacao(implantacaoDoLead(l.id))].push(l); });
+  var board = '<div class="kanban-board">'+IMPLANTACAO_ETAPAS.map(function(label, idx){
+    var items = byEstagio[idx];
+    return '<div class="kanban-col"><div class="kanban-col-head"><h3>'+label+'</h3><div class="meta">'+items.length+'</div></div>'+
+      '<div class="kanban-col-body" data-drop-estagio-impl="'+idx+'">'+
+      (items.length===0? '<div class="empty" style="padding:16px 6px;">Nenhuma.</div>' :
+      items.map(function(l){
+        var imp = implantacaoDoLead(l.id) || {};
+        var cli = clienteDoLead(l.id);
+        return '<div class="kanban-card" draggable="true" data-drag-impl-lead="'+l.id+'" data-open-impl="'+l.id+'">'+
+          '<div class="k-title">'+escapeHtml(l.nome||l.empresa||"—")+'</div>'+
+          '<div class="muted">'+fmtMoney(l.valor_estimado)+' · '+escapeHtml(imp.responsavel||"—")+'</div>'+
+          (operadoraTag(l)? '<div style="margin-top:4px;">'+operadoraTag(l)+'</div>' : '')+
+          '<div style="margin-top:4px;">'+(cli? '<span class="pill pill-ok">cadastro ok</span>' : '<span class="pill pill-warn">falta cadastro</span>')+'</div>'+
+          '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
+            (idx===3? '<button class="linklike" data-finalizar-implantacao="'+l.id+'">concluir</button>' : '')+
+            '<button class="linklike" data-agendar-tarefa-lead="'+l.id+'">+ tarefa</button>'+
+          '</div>'+
+        '</div>';
+      }).join(""))+
       '</div></div>';
-  }).join("");
-  return header + cards;
+  }).join("")+'</div>';
+  return header + board;
+}
+function openImplantacaoModal(lead){
+  var imp = implantacaoDoLead(lead.id) || {};
+  var cli = clienteDoLead(lead.id);
+  var estagio = estagioImplantacao(imp);
+  var mesAtual = todayMonthKey();
+  var boletoEmDia = imp.boleto_mes_referencia === mesAtual;
+  var tarefas = tarefasDoLead(lead.id);
+  var body =
+    (operadoraTag(lead)? '<div style="margin-bottom:10px;">'+operadoraTag(lead)+'</div>' : '')+
+    '<div class="helpbox">'+(cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' : '⚠️ Cadastro do cliente ainda não foi concluído.'+' <button class="linklike" data-convert-lead="'+lead.id+'">completar cadastro</button>')+'</div>'+
+    '<div class="field"><label>Etapa</label><select id="im-estagio">'+IMPLANTACAO_ETAPAS.map(function(e,i){ return '<option value="'+i+'"'+(estagio===i?' selected':'')+'>'+e+'</option>'; }).join("")+'</select></div>'+
+    '<div class="field row2"><div class="field"><label>Responsável</label><select id="im-resp">'+TEAM.map(function(t){return '<option'+((imp.responsavel||"Kelly")===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div><div class="field"></div></div>'+
+    '<div class="field"><label>Observações do acompanhamento</label><textarea id="im-obs">'+escapeHtml(imp.observacoes||"")+'</textarea></div>'+
+    (estagio===3? (
+      '<label class="rowflex" style="font-weight:400;"><input type="checkbox" id="im-boas-vindas" '+(imp.boas_vindas_enviada?'checked':'')+'> Mensagem de boas-vindas enviada</label>'+
+      '<div class="rowflex" style="margin-top:8px;"><span>Boleto de '+monthLabel(mesAtual)+': '+(boletoEmDia?'<span class="pill pill-ok">enviado</span>':'<span class="pill pill-warn">pendente</span>')+'</span>'+(boletoEmDia?'':' <button class="linklike" id="im-boleto-enviado">marcar como enviado</button>')+'</div>'
+    ) : '<div class="muted" style="font-size:12px;">Avance até "Confirmado pela operadora" pra liberar boas-vindas e boleto.</div>')+
+    '<fieldset style="margin-top:12px;"><legend>Tarefas deste negócio</legend>'+
+      '<button type="button" class="linklike" id="im-add-tarefa">+ nova tarefa</button>'+
+      (tarefas.length? tarefas.map(function(t){
+        return '<div class="activity-item" style="margin-top:6px;">'+
+          '<div><span class="k-activity-icon">'+(ATIVIDADE_ICON[t.canal]||"•")+'</span> '+escapeHtml(t.titulo)+(t.status==="Concluída"?' <span class="pill pill-ok">concluída</span>':'')+'</div>'+
+          '<div class="meta">'+escapeHtml(t.canal||"—")+' · '+fmtDateTime(t.vencimento_em)+(t.status!=="Concluída"?' · <button class="linklike" data-concluir-tarefa-lead="'+t.id+'">concluir</button>':'')+'</div>'+
+        '</div>';
+      }).join("") : '<div class="empty">Nenhuma tarefa ainda.</div>')+
+    '</fieldset>';
+
+  openModal("Implantação — "+(lead.nome||lead.empresa||"—"), body, function(closeFn){
+    var novoEstagio = parseInt(document.getElementById("im-estagio").value,10);
+    var resp = document.getElementById("im-resp").value;
+    var obs = document.getElementById("im-obs").value.trim();
+    var boasVindasEl = document.getElementById("im-boas-vindas");
+    var imp2 = implantacaoDoLead(lead.id);
+    var patch = {
+      documentos_solicitados: novoEstagio>=1, subiu_operadora: novoEstagio>=2, implantacao_confirmada: novoEstagio>=3,
+      responsavel: resp, observacoes: obs
+    };
+    if(boasVindasEl) patch.boas_vindas_enviada = boasVindasEl.checked;
+    if(imp2){ dbUpdate("implantacoes", imp2.id, patch); }
+    else { patch.lead_id = lead.id; dbInsert("implantacoes", patch); }
+    closeFn();
+  }, "Salvar");
+
+  var convertBtn = document.getElementById("modal-body") ? document.querySelector("#modal-body [data-convert-lead]") : null;
+  if(convertBtn) convertBtn.onclick = function(){
+    openClienteModal({lead_id:lead.id, titular_nome:lead.nome, razao_social:lead.empresa, produto:lead.produto, plano_nome:(lead.operadora||""), vendedor:lead.vendedor, valor_contrato_total:lead.valor_estimado, data_fechamento:lead.data_ganho||todayISO(), data_inclusao:todayISO(), status:"Ativo"});
+  };
+  var boletoBtn = document.getElementById("im-boleto-enviado");
+  if(boletoBtn) boletoBtn.onclick = function(){
+    var imp2 = implantacaoDoLead(lead.id);
+    if(imp2) dbUpdate("implantacoes", imp2.id, {boleto_mes_referencia: todayMonthKey()}).then(function(){ openImplantacaoModal(lead); });
+  };
+  var addTarefaBtn = document.getElementById("im-add-tarefa");
+  if(addTarefaBtn) addTarefaBtn.onclick = function(){ openLeadTarefaModal(lead, function(){ openImplantacaoModal(lead); }); };
+  Array.prototype.forEach.call(document.querySelectorAll("#modal-body [data-concluir-tarefa-lead]"), function(btn){
+    btn.onclick = function(){ setTarefaStatus(btn.getAttribute("data-concluir-tarefa-lead"), "Concluída").then(function(){ openImplantacaoModal(lead); }); };
+  });
 }
 /* Conclui a implantação de um negócio (some da aba Implantação a partir daí). Se o
    cadastro do cliente ainda não foi completado, abre o formulário primeiro — a implantação
@@ -2341,41 +2457,34 @@ function wireActions(){
   var ffAtrasados = document.getElementById("ff-atrasados"); if(ffAtrasados) ffAtrasados.onchange = function(){ funilFiltro.atrasados = ffAtrasados.checked; render(); };
   var ffViewKanban = document.getElementById("ff-view-kanban"); if(ffViewKanban) ffViewKanban.onclick = function(){ funilView = "kanban"; render(); };
   var ffViewLista = document.getElementById("ff-view-lista"); if(ffViewLista) ffViewLista.onclick = function(){ funilView = "lista"; render(); };
-  Array.prototype.forEach.call(document.querySelectorAll(".imp-check"), function(chk){
-    chk.onchange = function(){
-      var leadId = chk.getAttribute("data-imp-lead");
-      var field = chk.getAttribute("data-field");
-      var imp = implantacaoDoLead(leadId);
-      var patch = {}; patch[field] = chk.checked;
-      if(imp) dbUpdate("implantacoes", imp.id, patch);
-      else { patch.lead_id = leadId; patch.responsavel = "Kelly"; dbInsert("implantacoes", patch); }
-    };
-  });
-  Array.prototype.forEach.call(document.querySelectorAll(".imp-resp"), function(sel){
-    sel.onchange = function(){
-      var leadId = sel.getAttribute("data-imp-lead");
-      var imp = implantacaoDoLead(leadId);
-      if(imp) dbUpdate("implantacoes", imp.id, {responsavel:sel.value});
-      else dbInsert("implantacoes", {lead_id:leadId, responsavel:sel.value});
-    };
-  });
-  Array.prototype.forEach.call(document.querySelectorAll(".imp-obs"), function(ta){
-    ta.onblur = function(){
-      var leadId = ta.getAttribute("data-imp-lead");
-      var imp = implantacaoDoLead(leadId);
-      if(imp) dbUpdate("implantacoes", imp.id, {observacoes:ta.value.trim()});
-      else dbInsert("implantacoes", {lead_id:leadId, responsavel:"Kelly", observacoes:ta.value.trim()});
-    };
-  });
-  Array.prototype.forEach.call(document.querySelectorAll("[data-boleto-enviado]"), function(btn){
-    btn.onclick = function(){
-      var leadId = btn.getAttribute("data-boleto-enviado");
-      var imp = implantacaoDoLead(leadId);
-      if(imp) dbUpdate("implantacoes", imp.id, {boleto_mes_referencia: todayMonthKey()});
-    };
-  });
   Array.prototype.forEach.call(document.querySelectorAll("[data-finalizar-implantacao]"), function(btn){
     btn.onclick = function(){ finalizarImplantacao(btn.getAttribute("data-finalizar-implantacao")); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-drag-impl-lead]"), function(card){
+    card.addEventListener("dragstart", function(e){
+      e.dataTransfer.setData("text/plain", card.getAttribute("data-drag-impl-lead"));
+      e.dataTransfer.effectAllowed = "move";
+      card.classList.add("dragging");
+    });
+    card.addEventListener("dragend", function(){ card.classList.remove("dragging"); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-drop-estagio-impl]"), function(col){
+    col.addEventListener("dragover", function(e){ e.preventDefault(); col.classList.add("drag-over"); });
+    col.addEventListener("dragleave", function(){ col.classList.remove("drag-over"); });
+    col.addEventListener("drop", function(e){
+      e.preventDefault();
+      col.classList.remove("drag-over");
+      var leadId = e.dataTransfer.getData("text/plain");
+      var estagio = parseInt(col.getAttribute("data-drop-estagio-impl"),10);
+      if(leadId) setEstagioImplantacao(leadId, estagio).then(function(){ render(); });
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-open-impl]"), function(el){
+    el.addEventListener("click", function(e){
+      if(e.target.closest("select,button,.kanban-card-noopen")) return;
+      var l = state.leads.filter(function(x){return x.id===el.getAttribute("data-open-impl");})[0];
+      if(l) openImplantacaoModal(l);
+    });
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-boleto-historico],[data-boleto-cliente]"), function(btn){
     btn.onclick = function(){
