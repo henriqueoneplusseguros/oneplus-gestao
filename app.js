@@ -98,6 +98,16 @@ function maskCPF(v){
   d = d.replace(/(\d{3})(\d{1,2})$/,"$1-$2");
   return d;
 }
+/* UUID v4 gerado no navegador — usado pra já saber o id de um dependente/titular antes de
+   salvar, assim um dependente pode referenciar o titular adicional dele no mesmo lote de
+   inserção (crypto.randomUUID quando existe, senão um gerador simples de reserva). */
+function genUUID(){
+  if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+    var r = Math.random()*16|0, v = c==='x'?r:(r&0x3|0x8);
+    return v.toString(16);
+  });
+}
 /* Campo de dinheiro em texto (aceita vírgula), formatado ao perder o foco. */
 function moneyFieldHtml(id, value, label, extraAttrs){
   return '<div class="field"><label>'+label+'</label><input type="text" inputmode="decimal" class="money-input" id="'+id+'" value="'+escapeHtml(moneyDisplay(value))+'" placeholder="0,00" '+(extraAttrs||"")+'></div>';
@@ -634,32 +644,42 @@ function viewClientes(){
     '<button class="btn btn-primary" id="btn-novo-cliente">+ Novo cliente</button>'+
   '</div></div>'+
   '<div class="rowflex" style="margin-bottom:14px;"><input style="max-width:300px" placeholder="Buscar por nome, razão social, CNPJ ou CPF…" id="cli-search" value="'+escapeHtml(clientesFilter)+'"></div>'+
-  '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr>'+
-    '<th>Cliente</th><th>Contato</th><th>Plano</th><th>Vendedor(a)</th><th>Vigência</th><th class="num">Valor contrato</th><th>Vidas</th><th>Status</th><th>Faixa etária (titular)</th><th>Revisão</th><th></th>'+
-  '</tr></thead><tbody>'+
-  (list.length===0? '<tr><td colspan="11"><div class="empty">Nenhum cliente cadastrado ainda.</div></td></tr>' :
-  list.map(function(c){
+  (list.length===0? '<div class="card"><div class="card-body"><div class="empty">Nenhum cliente cadastrado ainda.</div></div></div>' :
+  '<div class="client-cards">'+list.map(function(c){
     var faixa = computeFaixa(c.data_nascimento);
     var rev = nextRevisao(c);
     var deps = depsOf(c.id);
     var nTitularesExtra = deps.filter(function(d){ return d.tipo==="Titular adicional"; }).length;
     var nDeps = deps.length - nTitularesExtra;
     var nVidas = 1 + deps.length;
-    return '<tr>'+
-      '<td><b>'+escapeHtml(clienteLabel(c))+'</b>'+(c.razao_social && c.titular_nome? '<br><span class="muted">'+escapeHtml(c.razao_social)+'</span>' : '')+'<br><span class="muted">'+escapeHtml(c.cnpj_cpf||c.cpf||"")+'</span>'+(c.boleto_ativo? ' <span class="tag">Boleto dia '+(c.boleto_dia_vencimento||"?")+'</span>' : '')+'</td>'+
-      '<td>'+(c.responsavel_financeiro? escapeHtml(c.responsavel_financeiro)+'<br>':'')+'<span class="muted">'+escapeHtml(c.telefone||"—")+'</span></td>'+
-      '<td>'+escapeHtml(c.plano_nome||c.produto||"—")+'</td>'+
-      '<td>'+escapeHtml(c.vendedor||"—")+'</td>'+
-      '<td>'+fmtDateISO(c.vigencia_inicio)+(c.vigencia_fim? ' – '+fmtDateISO(c.vigencia_fim):'')+'</td>'+
-      '<td class="num">'+fmtMoney(c.valor_contrato_total)+'</td>'+
-      '<td>'+nVidas+' <span class="muted">('+(1+nTitularesExtra)+' titular'+((1+nTitularesExtra)===1?'':'es')+' · '+nDeps+' dep.)</span></td>'+
-      '<td>'+(c.status==="Cancelado"?'<span class="pill pill-bad">Cancelado</span>':'<span class="pill pill-ok">Ativo</span>')+'</td>'+
-      '<td>'+(faixa? faixa.label+(faixa.nextChangeISO?'<br><span class="muted">muda '+fmtDateISO(faixa.nextChangeISO)+'</span>':'') : '—')+'</td>'+
-      '<td>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</td>'+
-            '<td><button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button></td>'+
-    '</tr>';
-  }).join(""))+
-  '</tbody></table></div></div>';
+    var nTitulares = 1 + nTitularesExtra;
+    return '<div class="client-card">'+
+      '<div class="client-card-head">'+
+        '<div>'+
+          '<h3>'+escapeHtml(clienteLabel(c))+'</h3>'+
+          (c.razao_social && c.titular_nome? '<div class="muted">'+escapeHtml(c.razao_social)+'</div>' : '')+
+          '<div class="muted">'+escapeHtml(c.cnpj_cpf||c.cpf||"—")+'</div>'+
+        '</div>'+
+        '<div class="rowflex" style="gap:6px;">'+
+          (c.status==="Cancelado"?'<span class="pill pill-bad">Cancelado</span>':'<span class="pill pill-ok">Ativo</span>')+
+          (c.boleto_ativo? '<span class="tag">Boleto dia '+(c.boleto_dia_vencimento||"?")+'</span>' : '')+
+        '</div>'+
+      '</div>'+
+      '<div class="info-grid">'+
+        '<div class="info-item"><span class="k">Contato</span><span>'+(c.responsavel_financeiro? escapeHtml(c.responsavel_financeiro)+' · ' : '')+escapeHtml(c.telefone||"—")+'</span></div>'+
+        '<div class="info-item"><span class="k">Plano</span><span>'+escapeHtml(c.plano_nome||c.produto||"—")+'</span></div>'+
+        '<div class="info-item"><span class="k">Vendedor(a)</span><span>'+escapeHtml(c.vendedor||"—")+'</span></div>'+
+        '<div class="info-item"><span class="k">Vigência</span><span>'+fmtDateISO(c.vigencia_inicio)+(c.vigencia_fim? ' – '+fmtDateISO(c.vigencia_fim):'')+'</span></div>'+
+        '<div class="info-item"><span class="k">Valor contrato</span><span><b>'+fmtMoney(c.valor_contrato_total)+'</b></span></div>'+
+        '<div class="info-item"><span class="k">Vidas</span><span>'+nVidas+' <span class="muted">('+nTitulares+' titular'+(nTitulares===1?'':'es')+' · '+nDeps+' dep.)</span></span></div>'+
+        '<div class="info-item"><span class="k">Faixa etária (titular)</span><span>'+(faixa? faixa.label+(faixa.nextChangeISO?' <span class="muted">· muda '+fmtDateISO(faixa.nextChangeISO)+'</span>':'') : '—')+'</span></div>'+
+        '<div class="info-item"><span class="k">Revisão</span><span>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</span></div>'+
+      '</div>'+
+      '<div class="client-card-foot">'+
+        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
+      '</div>'+
+    '</div>';
+  }).join("")+'</div>');
 }
 
 function clienteFormHtml(c, deps){
@@ -708,19 +728,32 @@ function clienteFormHtml(c, deps){
   '<div class="field row3"><div class="field"><label>Banco</label><input id="f-banco" value="'+escapeHtml(banco.banco||"")+'"></div><div class="field"><label>Agência</label><input id="f-agencia" value="'+escapeHtml(banco.agencia||"")+'"></div><div class="field"><label>Conta</label><input id="f-conta" value="'+escapeHtml(banco.conta||"")+'"></div></div>'+
   '<div class="field row2"><div class="field"><label>Tipo de conta</label><input id="f-tipo-conta" value="'+escapeHtml(banco.tipo_conta||"")+'" placeholder="Corrente / Poupança"></div><div class="field"><label>Chave PIX</label><input id="f-pix" value="'+escapeHtml(banco.pix||"")+'"></div></div>'+
   '</fieldset>'+
-  '<fieldset><legend>Dependentes</legend><div id="dep-list">'+deps.map(function(d,i){return depRowHtml(d,i);}).join("")+'</div>'+
+  '<fieldset><legend>Titulares e dependentes</legend>'+
+  '<div class="muted" style="font-size:11.5px;margin-bottom:8px;">Contratos com mais de um titular (ex: sócios da mesma empresa): cadastre cada um como "Titular adicional" e depois escolha, em cada dependente, a qual titular ele pertence.</div>'+
+  '<div id="dep-list">'+(function(){
+    var oldIdToRowIndex = {};
+    deps.forEach(function(d,i){ if(d.id) oldIdToRowIndex[d.id] = String(i); });
+    return deps.map(function(d,i){
+      var hint = (d.titular_ref_id && oldIdToRowIndex.hasOwnProperty(d.titular_ref_id)) ? oldIdToRowIndex[d.titular_ref_id] : "";
+      return depRowHtml(d, i, hint);
+    }).join("");
+  })()+'</div>'+
   '<button type="button" class="linklike" id="btn-add-dep" style="margin-top:6px;">+ adicionar dependente</button></fieldset>'+
   '<div class="field"><label>Observações</label><textarea id="f-obs">'+escapeHtml(c.observacoes||"")+'</textarea></div>';
 }
-function depRowHtml(d,i){
+function depRowHtml(d,i,titularHint){
   d=d||{};
+  var tipo = d.tipo||"Dependente";
   return '<div class="deprow" data-dep-row="'+i+'">'+
-    '<div class="field"><label>Nome</label><input class="dep-nome" value="'+escapeHtml(d.nome||"")+'"></div>'+
-    '<div class="field"><label>CPF</label><input class="dep-cpf" value="'+escapeHtml(d.cpf||"")+'"></div>'+
-    '<div class="field"><label>Nascimento</label><input type="date" class="dep-nasc" value="'+(d.data_nascimento||"")+'"></div>'+
-    '<div class="field"><label>Tipo</label><select class="dep-tipo">'+TIPOS_TITULARIDADE.map(function(t){return '<option'+((d.tipo||"Dependente")===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div>'+
-    '<div class="field"><label>Valor benefíc. (R$)</label><input type="text" inputmode="decimal" class="money-input dep-valor" value="'+escapeHtml(moneyDisplay(d.valor_beneficiario))+'" placeholder="0,00"></div>'+
-    '<button type="button" class="iconbtn" data-remove-dep="'+i+'">✕</button>'+
+    '<div class="deprow-fields">'+
+      '<div class="field"><label>Nome</label><input class="dep-nome" value="'+escapeHtml(d.nome||"")+'"></div>'+
+      '<div class="field"><label>CPF</label><input class="dep-cpf" value="'+escapeHtml(d.cpf||"")+'"></div>'+
+      '<div class="field"><label>Nascimento</label><input type="date" class="dep-nasc" value="'+(d.data_nascimento||"")+'"></div>'+
+      '<div class="field"><label>Tipo</label><select class="dep-tipo">'+TIPOS_TITULARIDADE.map(function(t){return '<option'+(tipo===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div>'+
+      '<div class="field"><label>Valor benefíc. (R$)</label><input type="text" inputmode="decimal" class="money-input dep-valor" value="'+escapeHtml(moneyDisplay(d.valor_beneficiario))+'" placeholder="0,00"></div>'+
+      '<button type="button" class="iconbtn" data-remove-dep="'+i+'">✕</button>'+
+    '</div>'+
+    '<div class="field dep-titular-wrap" style="margin-top:6px;'+(tipo==="Dependente"?"":"display:none;")+'"><label>Titular responsável</label><select class="dep-titular-ref" data-dep-titular-value="'+escapeHtml(titularHint||"")+'"><option value="">Titular principal</option></select></div>'+
   '</div>';
 }
 function wireClienteFormDeps(){
@@ -732,12 +765,45 @@ function wireClienteFormDeps(){
     div.innerHTML = depRowHtml({}, idx);
     list.appendChild(div.firstChild);
     wireDepRemovals();
+    refreshTitularSelects();
   };
   wireDepRemovals();
+  list.addEventListener("change", function(e){
+    if(e.target.classList.contains("dep-tipo")){
+      var wrap = e.target.closest("[data-dep-row]").querySelector(".dep-titular-wrap");
+      if(wrap) wrap.style.display = e.target.value==="Dependente" ? "" : "none";
+      refreshTitularSelects();
+    }
+  });
+  list.addEventListener("input", function(e){
+    if(e.target.classList.contains("dep-nome")) refreshTitularSelects();
+  });
+  refreshTitularSelects();
 }
 function wireDepRemovals(){
   Array.prototype.forEach.call(document.querySelectorAll("[data-remove-dep]"), function(btn){
-    btn.onclick = function(){ btn.closest("[data-dep-row]").remove(); };
+    btn.onclick = function(){ btn.closest("[data-dep-row]").remove(); refreshTitularSelects(); };
+  });
+}
+/* Recalcula as opções de "Titular responsável" de todo mundo, a partir das linhas
+   marcadas como "Titular adicional" no momento — chamado sempre que alguém adiciona,
+   remove ou muda o tipo/nome de uma linha, pra manter a lista de titulares em dia. */
+function refreshTitularSelects(){
+  var list = document.getElementById("dep-list");
+  if(!list) return;
+  var rows = Array.prototype.slice.call(list.querySelectorAll("[data-dep-row]"));
+  var titulares = rows.map(function(row){
+    var tipoEl = row.querySelector(".dep-tipo");
+    var nomeEl = row.querySelector(".dep-nome");
+    return {rowIndex: row.getAttribute("data-dep-row"), tipo: tipoEl?tipoEl.value:"Dependente", nome: nomeEl?nomeEl.value.trim():""};
+  }).filter(function(r){ return r.tipo==="Titular adicional"; });
+  rows.forEach(function(row){
+    var sel = row.querySelector(".dep-titular-ref");
+    if(!sel) return;
+    var current = sel.value || sel.getAttribute("data-dep-titular-value") || "";
+    sel.innerHTML = '<option value="">Titular principal</option>'+titulares.map(function(t){ return '<option value="'+t.rowIndex+'">'+escapeHtml(t.nome||("Titular adicional (linha "+(parseInt(t.rowIndex,10)+1)+")"))+'</option>'; }).join("");
+    if(titulares.some(function(t){return t.rowIndex===current;})) sel.value = current;
+    sel.removeAttribute("data-dep-titular-value");
   });
 }
 function wireClienteFormExtra(){
@@ -848,16 +914,28 @@ function wireClienteFormExtra(){
   }
 }
 function readClienteForm(){
+  var rows = Array.prototype.slice.call(document.querySelectorAll("[data-dep-row]"));
+  var rowIdMap = {};
+  rows.forEach(function(row){ rowIdMap[row.getAttribute("data-dep-row")] = genUUID(); });
   var deps=[];
-  Array.prototype.forEach.call(document.querySelectorAll("[data-dep-row]"), function(row){
+  rows.forEach(function(row){
+    var idx = row.getAttribute("data-dep-row");
     var nome = row.querySelector(".dep-nome").value.trim();
     var cpf = row.querySelector(".dep-cpf").value.trim();
     var nasc = row.querySelector(".dep-nasc").value;
     var valor = parseMoneyBR(row.querySelector(".dep-valor").value);
     var tipoEl = row.querySelector(".dep-tipo");
     var tipo = tipoEl ? tipoEl.value : "Dependente";
-    if(nome||cpf||nasc) deps.push({nome:nome, cpf:cpf, data_nascimento:nasc||null, valor_beneficiario:valor, tipo:tipo});
+    var titularSel = row.querySelector(".dep-titular-ref");
+    var titularRefRowIndex = (tipo==="Dependente" && titularSel && titularSel.value) ? titularSel.value : null;
+    if(nome||cpf||nasc) deps.push({
+      id: rowIdMap[idx], nome:nome, cpf:cpf, data_nascimento:nasc||null, valor_beneficiario:valor, tipo:tipo,
+      titular_ref_id: titularRefRowIndex ? rowIdMap[titularRefRowIndex] : null
+    });
   });
+  // titulares adicionais precisam ser inseridos antes dos dependentes que apontam pra eles
+  // (a chave estrangeira é checada linha a linha, na ordem do insert).
+  deps.sort(function(a,b){ return (a.tipo==="Titular adicional"?0:1) - (b.tipo==="Titular adicional"?0:1); });
   var banco = {
     banco: document.getElementById("f-banco").value.trim(),
     agencia: document.getElementById("f-agencia").value.trim(),
