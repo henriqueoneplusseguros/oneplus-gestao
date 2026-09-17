@@ -2145,6 +2145,7 @@ function viewImplantacao(){
           '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
             (idx===ESTAGIO_ONBOARD? '<button class="linklike" data-finalizar-implantacao="'+l.id+'">concluir</button>' : '')+
             '<button class="linklike" data-agendar-tarefa-lead="'+l.id+'">+ tarefa</button>'+
+            '<button class="linklike" data-excluir-implantacao="'+l.id+'" style="color:var(--danger);">excluir</button>'+
           '</div>'+
         '</div>';
       }).join(""))+
@@ -2265,6 +2266,17 @@ function finalizarImplantacao(leadId){
   }
   if(!confirm('Concluir a implantação de "'+clienteLabel(cli)+'"? Ela vai sumir da aba Implantação (o cadastro continua em Clientes).')) return;
   marcarConcluida();
+}
+/* Exclui de vez um negócio que não vai mais seguir (cliente desistiu etc.) — apaga o negócio,
+   o pré-cadastro/implantação e as tarefas ligadas a ele. Se ele já tinha virado cliente de
+   verdade, o cadastro em "Clientes" continua intacto (não é apagado por engano). */
+function excluirImplantacao(leadId){
+  var l = state.leads.filter(function(x){ return x.id===leadId; })[0];
+  if(!l) return;
+  var cli = clienteDoLead(leadId);
+  if(cli){ toast("Esse negócio já virou cliente — para remover, exclua o cliente pela aba Clientes."); return; }
+  if(!confirm('Excluir "'+(l.nome||l.empresa||"esse negócio")+'" da implantação? Isso apaga o negócio, o pré-cadastro e as tarefas ligadas a ele — não pode ser desfeito.')) return;
+  dbDelete("leads", leadId, ["implantacoes","tarefas"]);
 }
 
 /* ================= TAREFAS ================= */
@@ -2732,6 +2744,9 @@ function wireActions(){
   var ffViewLista = document.getElementById("ff-view-lista"); if(ffViewLista) ffViewLista.onclick = function(){ funilView = "lista"; render(); };
   Array.prototype.forEach.call(document.querySelectorAll("[data-finalizar-implantacao]"), function(btn){
     btn.onclick = function(){ finalizarImplantacao(btn.getAttribute("data-finalizar-implantacao")); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-excluir-implantacao]"), function(btn){
+    btn.onclick = function(){ excluirImplantacao(btn.getAttribute("data-excluir-implantacao")); };
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-drag-impl-lead]"), function(card){
     card.addEventListener("dragstart", function(e){
