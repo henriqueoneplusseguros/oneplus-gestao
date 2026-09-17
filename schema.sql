@@ -457,3 +457,6 @@ alter table clientes add column if not exists responsavel_financeiro text;
 -- pode estar ligado a um "Titular adicional" específico (outra linha desta mesma tabela)
 -- em vez de ficar só embaixo do titular principal do cadastro. Nulo = titular principal.
 alter table dependentes add column if not exists titular_ref_id uuid references dependentes(id) on delete set null;
+
+-- ========== CLIENTES: link da pasta no Drive ==========
+alter table clientes add column if not exists drive_link text;

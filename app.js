@@ -569,7 +569,7 @@ function render(){
 }
 function tile(label,value,sub){ return '<div class="tile"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+(sub||"")+'</div></div>'; }
 function tabbtn(group,id,label,current){ return '<div class="tab2'+(current===id?' active':'')+'" data-'+group+'-tab="'+id+'">'+label+'</div>'; }
-function clienteLabel(c){ return c ? (c.titular_nome || c.razao_social || "Cliente") : "—"; }
+function clienteLabel(c){ return c ? (c.razao_social || c.titular_nome || "Cliente") : "—"; }
 
 /* ================= MODAL helper ================= */
 function openModal(title, bodyHtml, onSave, saveLabel){
@@ -657,7 +657,7 @@ function viewClientes(){
       '<div class="client-card-head">'+
         '<div>'+
           '<h3>'+escapeHtml(clienteLabel(c))+'</h3>'+
-          (c.razao_social && c.titular_nome? '<div class="muted">'+escapeHtml(c.razao_social)+'</div>' : '')+
+          (c.razao_social && c.titular_nome? '<div class="muted">'+escapeHtml(c.titular_nome)+'</div>' : '')+
           '<div class="muted">'+escapeHtml(c.cnpj_cpf||c.cpf||"—")+'</div>'+
         '</div>'+
         '<div class="rowflex" style="gap:6px;">'+
@@ -676,7 +676,7 @@ function viewClientes(){
         '<div class="info-item"><span class="k">Revisão</span><span>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</span></div>'+
       '</div>'+
       '<div class="client-card-foot">'+
-        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
+        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button>'+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
       '</div>'+
     '</div>';
   }).join("")+'</div>');
@@ -693,6 +693,7 @@ function clienteFormHtml(c, deps){
   '<div class="muted" id="f-cnpj-status" style="font-size:11.5px;"></div>'+
   '<div class="field row3"><div class="field"><label>E-mail</label><input type="email" id="f-email" value="'+escapeHtml(c.email||"")+'"></div><div class="field"><label>Telefone (WhatsApp)</label><input id="f-telefone" value="'+escapeHtml(c.telefone||"")+'"></div><div class="field"><label>Nº da carteirinha</label><input id="f-carteirinha" value="'+escapeHtml(c.numero_carteirinha||"")+'"></div></div>'+
   '<div class="field"><label>Responsável financeiro (quem recebe o boleto, se for diferente do titular)</label><input id="f-resp-financeiro" value="'+escapeHtml(c.responsavel_financeiro||"")+'" placeholder="ex: nome de quem cuida do financeiro na empresa"></div>'+
+  '<div class="field"><label>Link da pasta no Drive (documentos do cliente)</label><input id="f-drive-link" value="'+escapeHtml(c.drive_link||"")+'" placeholder="https://drive.google.com/..."></div>'+
   '</fieldset>'+
   '<fieldset><legend>Endereço</legend>'+
   '<div class="field row3"><div class="field"><label>CEP</label><input id="f-cep" value="'+escapeHtml(c.cep||"")+'" placeholder="00000-000" maxlength="9"></div><div class="field"><label>Número</label><input id="f-end-numero" value="'+escapeHtml(c.endereco_numero||"")+'"></div><div class="field"><label>Complemento (apto/bloco)</label><input id="f-end-compl" value="'+escapeHtml(c.endereco_complemento||"")+'"></div></div>'+
@@ -748,7 +749,7 @@ function depRowHtml(d,i,titularHint){
     '<div class="deprow-fields">'+
       '<div class="field"><label>Nome</label><input class="dep-nome" value="'+escapeHtml(d.nome||"")+'"></div>'+
       '<div class="field"><label>CPF</label><input class="dep-cpf" value="'+escapeHtml(d.cpf||"")+'"></div>'+
-      '<div class="field"><label>Nascimento</label><input type="date" class="dep-nasc" value="'+(d.data_nascimento||"")+'"></div>'+
+      '<div class="field"><label>Nascimento <span class="dep-idade-out muted">'+(d.data_nascimento? "("+ageOnISO(d.data_nascimento, todayISO())+" ano"+(ageOnISO(d.data_nascimento, todayISO())===1?"":"s")+")" : "")+'</span></label><input type="date" class="dep-nasc" value="'+(d.data_nascimento||"")+'"></div>'+
       '<div class="field"><label>Tipo</label><select class="dep-tipo">'+TIPOS_TITULARIDADE.map(function(t){return '<option'+(tipo===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div>'+
       '<div class="field"><label>Valor benefíc. (R$)</label><input type="text" inputmode="decimal" class="money-input dep-valor" value="'+escapeHtml(moneyDisplay(d.valor_beneficiario))+'" placeholder="0,00"></div>'+
       '<button type="button" class="iconbtn" data-remove-dep="'+i+'">✕</button>'+
@@ -777,6 +778,13 @@ function wireClienteFormDeps(){
   });
   list.addEventListener("input", function(e){
     if(e.target.classList.contains("dep-nome")) refreshTitularSelects();
+    if(e.target.classList.contains("dep-nasc")){
+      var out = e.target.closest("[data-dep-row]").querySelector(".dep-idade-out");
+      if(!out) return;
+      if(!e.target.value){ out.textContent = ""; return; }
+      var idade = ageOnISO(e.target.value, todayISO());
+      out.textContent = "("+idade+" ano"+(idade===1?"":"s")+")";
+    }
   });
   refreshTitularSelects();
 }
@@ -950,6 +958,7 @@ function readClienteForm(){
       cnpj_cpf: document.getElementById("f-cnpj").value.trim(),
       cpf: document.getElementById("f-cpf").value.trim(),
       responsavel_financeiro: document.getElementById("f-resp-financeiro").value.trim(),
+      drive_link: document.getElementById("f-drive-link").value.trim(),
       data_nascimento: document.getElementById("f-nasc").value || null,
       email: document.getElementById("f-email").value.trim(),
       telefone: document.getElementById("f-telefone").value.trim(),
@@ -1946,9 +1955,13 @@ function openLeadDetailPanel(leadId){
 /* ================= IMPLANTAÇÃO ================= */
 function clienteDoLead(leadId){ return state.clientes.filter(function(c){ return c.lead_id===leadId; })[0]; }
 function implantacaoDoLead(leadId){ return state.implantacoes.filter(function(i){ return i.lead_id===leadId; })[0]; }
-var IMPLANTACAO_ETAPAS = ["A fazer","Documentos solicitados","Enviado à operadora","Confirmado pela operadora"];
+/* A implantação só vira "Cliente" de verdade depois do onboarding (boas-vindas) — antes disso
+   ela pode ser negada pela operadora, então não cadastramos como cliente ainda. */
+var IMPLANTACAO_ETAPAS = ["A fazer","Documentos solicitados","Enviado à operadora","Confirmado pela operadora","Boas-vindas / Onboard"];
+var ESTAGIO_ONBOARD = IMPLANTACAO_ETAPAS.length - 1;
 function estagioImplantacao(imp){
   imp = imp || {};
+  if(imp.boas_vindas_enviada) return ESTAGIO_ONBOARD;
   if(imp.implantacao_confirmada) return 3;
   if(imp.subiu_operadora) return 2;
   if(imp.documentos_solicitados) return 1;
@@ -1956,7 +1969,7 @@ function estagioImplantacao(imp){
 }
 async function setEstagioImplantacao(leadId, estagio){
   var imp = implantacaoDoLead(leadId);
-  var patch = {documentos_solicitados: estagio>=1, subiu_operadora: estagio>=2, implantacao_confirmada: estagio>=3};
+  var patch = {documentos_solicitados: estagio>=1, subiu_operadora: estagio>=2, implantacao_confirmada: estagio>=3, boas_vindas_enviada: estagio>=ESTAGIO_ONBOARD};
   if(imp){ await dbUpdate("implantacoes", imp.id, patch); }
   else { patch.lead_id=leadId; patch.responsavel="Kelly"; await dbInsert("implantacoes", patch); }
 }
@@ -1968,7 +1981,7 @@ function viewImplantacao(){
   }).sort(function(a,b){ return (b.data_ganho||"")<(a.data_ganho||"")?-1:1; });
   var header = '<div class="topbar"><div><h1>Implantação</h1><div class="desc">Negócios ganhos — arraste o cartão (ou clique nele) · implantações concluídas somem daqui e continuam em Clientes</div></div></div>';
   if(ganhos.length===0) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum negócio ganho ainda — assim que marcar um negócio como "Ganho" no funil, ele aparece aqui.</div></div></div>';
-  var byEstagio = [[],[],[],[]];
+  var byEstagio = IMPLANTACAO_ETAPAS.map(function(){ return []; });
   ganhos.forEach(function(l){ byEstagio[estagioImplantacao(implantacaoDoLead(l.id))].push(l); });
   var board = '<div class="kanban-board">'+IMPLANTACAO_ETAPAS.map(function(label, idx){
     var items = byEstagio[idx];
@@ -1982,9 +1995,9 @@ function viewImplantacao(){
           '<div class="k-title">'+escapeHtml(l.nome||l.empresa||"—")+'</div>'+
           '<div class="muted">'+fmtMoney(l.valor_estimado)+' · '+escapeHtml(imp.responsavel||"—")+'</div>'+
           (operadoraTag(l)? '<div style="margin-top:4px;">'+operadoraTag(l)+'</div>' : '')+
-          '<div style="margin-top:4px;">'+(cli? '<span class="pill pill-ok">cadastro ok</span>' : '<span class="pill pill-warn">falta cadastro</span>')+'</div>'+
+          (idx>=ESTAGIO_ONBOARD? '<div style="margin-top:4px;">'+(cli? '<span class="pill pill-ok">cadastro ok</span>' : '<span class="pill pill-warn">falta cadastro</span>')+'</div>' : '')+
           '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
-            (idx===3? '<button class="linklike" data-finalizar-implantacao="'+l.id+'">concluir</button>' : '')+
+            (idx===ESTAGIO_ONBOARD? '<button class="linklike" data-finalizar-implantacao="'+l.id+'">concluir</button>' : '')+
             '<button class="linklike" data-agendar-tarefa-lead="'+l.id+'">+ tarefa</button>'+
           '</div>'+
         '</div>';
@@ -2002,14 +2015,17 @@ function openImplantacaoModal(lead){
   var tarefas = tarefasDoLead(lead.id);
   var body =
     (operadoraTag(lead)? '<div style="margin-bottom:10px;">'+operadoraTag(lead)+'</div>' : '')+
-    '<div class="helpbox">'+(cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' : '⚠️ Cadastro do cliente ainda não foi concluído.'+' <button class="linklike" data-convert-lead="'+lead.id+'">completar cadastro</button>')+'</div>'+
+    '<div class="helpbox">'+(
+      cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' :
+      estagio>=ESTAGIO_ONBOARD? '⚠️ Onboard feito, mas o cadastro do cliente ainda não foi concluído.'+' <button class="linklike" data-convert-lead="'+lead.id+'">completar cadastro</button>' :
+      '🔒 Vira cliente de verdade só depois do onboard (boas-vindas) — evita cadastrar antes de saber se a operadora aprova.'
+    )+'</div>'+
     '<div class="field"><label>Etapa</label><select id="im-estagio">'+IMPLANTACAO_ETAPAS.map(function(e,i){ return '<option value="'+i+'"'+(estagio===i?' selected':'')+'>'+e+'</option>'; }).join("")+'</select></div>'+
     '<div class="field row2"><div class="field"><label>Responsável</label><select id="im-resp">'+TEAM.map(function(t){return '<option'+((imp.responsavel||"Kelly")===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div><div class="field"></div></div>'+
     '<div class="field"><label>Observações do acompanhamento</label><textarea id="im-obs">'+escapeHtml(imp.observacoes||"")+'</textarea></div>'+
-    (estagio===3? (
-      '<label class="rowflex" style="font-weight:400;"><input type="checkbox" id="im-boas-vindas" '+(imp.boas_vindas_enviada?'checked':'')+'> Mensagem de boas-vindas enviada</label>'+
-      '<div class="rowflex" style="margin-top:8px;"><span>Boleto de '+monthLabel(mesAtual)+': '+(boletoEmDia?'<span class="pill pill-ok">enviado</span>':'<span class="pill pill-warn">pendente</span>')+'</span>'+(boletoEmDia?'':' <button class="linklike" id="im-boleto-enviado">marcar como enviado</button>')+'</div>'
-    ) : '<div class="muted" style="font-size:12px;">Avance até "Confirmado pela operadora" pra liberar boas-vindas e boleto.</div>')+
+    (estagio>=3? (
+      '<div class="rowflex"><span>Boleto de '+monthLabel(mesAtual)+': '+(boletoEmDia?'<span class="pill pill-ok">enviado</span>':'<span class="pill pill-warn">pendente</span>')+'</span>'+(boletoEmDia?'':' <button class="linklike" id="im-boleto-enviado">marcar como enviado</button>')+'</div>'
+    ) : '<div class="muted" style="font-size:12px;">Avance até "Confirmado pela operadora" pra liberar o controle de boleto.</div>')+
     '<fieldset style="margin-top:12px;"><legend>Tarefas deste negócio</legend>'+
       '<button type="button" class="linklike" id="im-add-tarefa">+ nova tarefa</button>'+
       (tarefas.length? tarefas.map(function(t){
@@ -2024,13 +2040,11 @@ function openImplantacaoModal(lead){
     var novoEstagio = parseInt(document.getElementById("im-estagio").value,10);
     var resp = document.getElementById("im-resp").value;
     var obs = document.getElementById("im-obs").value.trim();
-    var boasVindasEl = document.getElementById("im-boas-vindas");
     var imp2 = implantacaoDoLead(lead.id);
     var patch = {
-      documentos_solicitados: novoEstagio>=1, subiu_operadora: novoEstagio>=2, implantacao_confirmada: novoEstagio>=3,
+      documentos_solicitados: novoEstagio>=1, subiu_operadora: novoEstagio>=2, implantacao_confirmada: novoEstagio>=3, boas_vindas_enviada: novoEstagio>=ESTAGIO_ONBOARD,
       responsavel: resp, observacoes: obs
     };
-    if(boasVindasEl) patch.boas_vindas_enviada = boasVindasEl.checked;
     if(imp2){ dbUpdate("implantacoes", imp2.id, patch); }
     else { patch.lead_id = lead.id; dbInsert("implantacoes", patch); }
     closeFn();
