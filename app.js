@@ -1211,8 +1211,26 @@ function openBoletoModal(cliente, mk){
 /* ================= FINANCEIRO (acesso restrito: só Henrique e Kelly) =================
    Comissionamento recebido por cliente (com anexo do demonstrativo) e baixa de cliente.
    Reaproveita o bucket de storage próprio "financeiro" e a tabela comissoes_recebidas. */
+/* Comissionamento (empresarial): até 3 parcelas cheias (100% cada, então "300%" do valor do
+   contrato) + 2% vitalício a partir da 4ª parcela em diante — mas na prática cada contrato
+   pode variar (às vezes só vêm 2 parcelas cheias, nem todo contrato tem vitalício, e o %
+   pode não ser sempre 2), por isso tudo isso fica manual, lançamento por lançamento. */
+var PARCELAS_COMISSAO = ["Parcela 1","Parcela 2","Parcela 3","Vitalício"];
 function totalComissoesCliente(clienteId){
   return state.comissoes_recebidas.filter(function(c){ return c.cliente_id===clienteId; }).reduce(function(s,c){ return s+(c.valor||0); },0);
+}
+function comissaoLiquida(bruto){ return bruto * (1-(state.params.taxa_imposto||0)); }
+function resumoComissoesCliente(clienteId){
+  var rows = state.comissoes_recebidas.filter(function(c){ return c.cliente_id===clienteId; });
+  var vitalicio = rows.filter(function(r){ return r.parcela==="Vitalício"; });
+  var parcelas = rows.filter(function(r){ return r.parcela!=="Vitalício"; });
+  var brutoParcelas = parcelas.reduce(function(s,r){ return s+(r.valor||0); },0);
+  var brutoVitalicio = vitalicio.reduce(function(s,r){ return s+(r.valor||0); },0);
+  return {
+    brutoParcelas: brutoParcelas, liquidoParcelas: comissaoLiquida(brutoParcelas),
+    brutoVitalicio: brutoVitalicio, liquidoVitalicio: comissaoLiquida(brutoVitalicio),
+    brutoTotal: brutoParcelas+brutoVitalicio, liquidoTotal: comissaoLiquida(brutoParcelas+brutoVitalicio)
+  };
 }
 async function uploadFinanceiroArquivo(clienteId, tipo, file){
   var ext = (file.name.split(".").pop()||"pdf").toLowerCase();
@@ -1246,22 +1264,40 @@ function viewFinanceiro(){
 function openFinanceiroModal(cliente){
   var comissoes = state.comissoes_recebidas.filter(function(c){ return c.cliente_id===cliente.id; })
     .sort(function(a,b){ return (b.data_recebimento||"")<(a.data_recebimento||"")?-1:1; });
+  var resumo = resumoComissoesCliente(cliente.id);
+  var esperado300 = (cliente.valor_contrato_total||0)*3;
+  var vitalicioPct = cliente.comissao_vitalicio_pct!=null ? cliente.comissao_vitalicio_pct : 2;
+  var taxaImposto = state.params.taxa_imposto||0;
   var body =
     '<div class="kv-list" style="margin-bottom:12px;">'+
       '<div class="kv-row"><span class="k">Valor do contrato</span><span>'+fmtMoney(cliente.valor_contrato_total)+'</span></div>'+
-      '<div class="kv-row"><span class="k">Total recebido</span><span><b>'+fmtMoney(totalComissoesCliente(cliente.id))+'</b></span></div>'+
+      '<div class="kv-row"><span class="k">Comissão esperada (3 parcelas · 300%)</span><span>'+fmtMoney(esperado300)+'</span></div>'+
     '</div>'+
     '<label class="rowflex" style="font-weight:400;margin-bottom:12px;"><input type="checkbox" id="fin-baixado" '+(cliente.baixado_financeiro?"checked":"")+'> Cliente baixado (encerrado financeiramente)</label>'+
-    '<fieldset><legend>Lançar comissionamento recebido</legend>'+
-      '<div class="field row3">'+moneyFieldHtml("fin-valor", null, "Valor recebido (R$)")+'<div class="field"><label>Data de recebimento</label><input type="date" id="fin-data" value="'+todayISO()+'"></div><div class="field"><label>Mês de referência</label><input id="fin-mes" placeholder="ex: 2026-09"></div></div>'+
-      '<div class="field"><label>Observações</label><input id="fin-obs"></div>'+
+    '<fieldset><legend>Comissionamento deste contrato</legend>'+
+      '<div class="field row2">'+
+        '<div class="field"><label>Tem vitalício?</label><select id="fin-vitalicio-sn"><option value="nao"'+(!cliente.comissao_vitalicio?' selected':'')+'>Não</option><option value="sim"'+(cliente.comissao_vitalicio?' selected':'')+'>Sim</option></select></div>'+
+        '<div class="field" id="fin-vitalicio-pct-wrap" style="'+(cliente.comissao_vitalicio?'':'display:none;')+'"><label>% vitalício</label><input type="number" step="0.1" id="fin-vitalicio-pct" value="'+vitalicioPct+'"></div>'+
+      '</div>'+
+    '</fieldset>'+
+    '<fieldset style="margin-top:12px;"><legend>Lançar comissionamento recebido</legend>'+
+      '<div class="field row3"><div class="field"><label>Parcela</label><select id="fin-parcela">'+PARCELAS_COMISSAO.map(function(p){ return '<option'+(p==="Vitalício"&&!cliente.comissao_vitalicio?' disabled':'')+'>'+p+'</option>'; }).join("")+'</select></div>'+moneyFieldHtml("fin-valor", null, "Valor recebido (R$)")+'<div class="field"><label>Data de recebimento</label><input type="date" id="fin-data" value="'+todayISO()+'"></div></div>'+
+      '<div class="field row2"><div class="field"><label>Mês de referência</label><input id="fin-mes" placeholder="ex: 2026-09"></div><div class="field"><label>Observações</label><input id="fin-obs"></div></div>'+
       '<div class="field"><label>Demonstrativo (opcional)</label><input type="file" id="fin-arquivo" accept="application/pdf,image/*"></div>'+
       '<button type="button" class="btn btn-primary" id="fin-add" style="margin-top:6px;">+ lançar</button>'+
+    '</fieldset>'+
+    '<fieldset style="margin-top:12px;"><legend>Resumo (líquido já descontando '+fmtPct(taxaImposto)+' de imposto)</legend>'+
+      '<div class="kv-list">'+
+        '<div class="kv-row"><span class="k">Recebido em parcelas</span><span>'+fmtMoney(resumo.brutoParcelas)+' <span class="muted">→ líquido '+fmtMoney(resumo.liquidoParcelas)+'</span></span></div>'+
+        '<div class="kv-row"><span class="k">Recebido em vitalício</span><span>'+fmtMoney(resumo.brutoVitalicio)+' <span class="muted">→ líquido '+fmtMoney(resumo.liquidoVitalicio)+'</span></span></div>'+
+        '<div class="kv-row"><span class="k">Total recebido</span><span><b>'+fmtMoney(resumo.brutoTotal)+'</b> <span class="muted">→ líquido <b>'+fmtMoney(resumo.liquidoTotal)+'</b></span></span></div>'+
+        '<div class="kv-row"><span class="k">% do esperado (300%) já recebido</span><span>'+(esperado300>0? fmtPct(resumo.brutoParcelas/esperado300) : '—')+'</span></div>'+
+      '</div>'+
     '</fieldset>'+
     '<fieldset style="margin-top:12px;"><legend>Histórico</legend>'+
       (comissoes.length? comissoes.map(function(c){
         return '<div class="activity-item" style="margin-top:6px;">'+
-          '<div><b>'+fmtMoney(c.valor)+'</b>'+(c.mes_referencia? ' · '+monthLabel(c.mes_referencia):'')+'</div>'+
+          '<div><b>'+fmtMoney(c.valor)+'</b>'+(c.parcela? ' · '+escapeHtml(c.parcela):'')+(c.mes_referencia? ' · '+monthLabel(c.mes_referencia):'')+'</div>'+
           '<div class="meta">'+(c.data_recebimento? fmtDateISO(c.data_recebimento):"—")+(c.observacoes? ' · '+escapeHtml(c.observacoes):'')+(c.arquivo_path? ' · <button class="linklike" data-baixar-financeiro="'+escapeHtml(c.arquivo_path)+'">baixar demonstrativo</button>':'')+'</div>'+
         '</div>';
       }).join("") : '<div class="empty">Nenhum lançamento ainda.</div>')+
@@ -1272,6 +1308,17 @@ function openFinanceiroModal(cliente){
   if(baixadoEl) baixadoEl.onchange = function(){
     dbUpdate("clientes", cliente.id, {baixado_financeiro: baixadoEl.checked, baixado_financeiro_em: baixadoEl.checked? new Date().toISOString() : null});
   };
+  var vitalicioSnEl = document.getElementById("fin-vitalicio-sn");
+  var vitalicioPctWrap = document.getElementById("fin-vitalicio-pct-wrap");
+  if(vitalicioSnEl) vitalicioSnEl.onchange = function(){
+    vitalicioPctWrap.style.display = vitalicioSnEl.value==="sim" ? "" : "none";
+    dbUpdate("clientes", cliente.id, {comissao_vitalicio: vitalicioSnEl.value==="sim"}).then(function(){ openFinanceiroModal(cliente); });
+  };
+  var vitalicioPctEl = document.getElementById("fin-vitalicio-pct");
+  if(vitalicioPctEl) vitalicioPctEl.addEventListener("blur", function(){
+    var pct = parseFloat(vitalicioPctEl.value)||0;
+    dbUpdate("clientes", cliente.id, {comissao_vitalicio_pct: pct});
+  });
   var addBtn = document.getElementById("fin-add");
   if(addBtn) addBtn.onclick = async function(){
     var valor = parseMoneyBR(document.getElementById("fin-valor").value);
@@ -1281,6 +1328,7 @@ function openFinanceiroModal(cliente){
     if(fileEl.files[0]) arquivoPath = await uploadFinanceiroArquivo(cliente.id, "demonstrativo", fileEl.files[0]);
     await dbInsert("comissoes_recebidas", {
       cliente_id: cliente.id, valor: valor,
+      parcela: document.getElementById("fin-parcela").value,
       data_recebimento: document.getElementById("fin-data").value || null,
       mes_referencia: document.getElementById("fin-mes").value.trim() || null,
       observacoes: document.getElementById("fin-obs").value.trim(),

@@ -498,3 +498,13 @@ do $$ begin
       with check (bucket_id = 'financeiro' and auth.role() = 'authenticated');
   end if;
 end $$;
+
+-- ========== FINANCEIRO: comissionamento (300% em até 3 parcelas cheias + vitalício opcional) ==========
+-- Vitalício varia contrato a contrato (às vezes não tem, e o % pode variar às vezes),
+-- por isso fica editável aqui em vez de fixo — diferente do padrão global em "params".
+alter table clientes add column if not exists comissao_vitalicio boolean default false;
+alter table clientes add column if not exists comissao_vitalicio_pct numeric(5,2) default 2;
+
+-- Cada lançamento de comissão agora identifica a qual parcela pertence (1, 2, 3 ou Vitalício) —
+-- em alguns contratos só vêm 2 parcelas cheias em vez de 3, por isso isso também é manual.
+alter table comissoes_recebidas add column if not exists parcela text;
