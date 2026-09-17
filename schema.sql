@@ -460,3 +460,41 @@ alter table dependentes add column if not exists titular_ref_id uuid references 
 
 -- ========== CLIENTES: link da pasta no Drive ==========
 alter table clientes add column if not exists drive_link text;
+
+-- ========== PRÉ-CADASTRO NA IMPLANTAÇÃO + RG ==========
+-- O negócio só vira "Cliente" de verdade depois do onboard (ver ESTAGIO_ONBOARD no app.js).
+-- Antes disso, RG/CPF/dependentes/plano ficam guardados aqui (rascunho), sem criar linha em
+-- "clientes" — assim a Kelly já recebe e organiza os documentos durante a implantação, sem
+-- correr o risco de cadastrar um cliente que a operadora ainda pode negar.
+alter table clientes add column if not exists rg text;
+alter table implantacoes add column if not exists pre_cadastro jsonb;
+
+-- ========== FINANCEIRO (acesso restrito no app a Henrique e Kelly) ==========
+alter table clientes add column if not exists baixado_financeiro boolean default false;
+alter table clientes add column if not exists baixado_financeiro_em timestamptz;
+
+create table if not exists comissoes_recebidas (
+  id uuid primary key default gen_random_uuid(),
+  cliente_id uuid references clientes(id) on delete cascade,
+  valor numeric(12,2) not null,
+  data_recebimento date,
+  mes_referencia text,
+  observacoes text,
+  arquivo_path text,
+  criado_por text,
+  criado_em timestamptz default now()
+);
+alter table comissoes_recebidas enable row level security;
+create policy "auth all comissoes_recebidas" on comissoes_recebidas for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+insert into storage.buckets (id, name, public)
+values ('financeiro', 'financeiro', false)
+on conflict (id) do nothing;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where tablename = 'objects' and policyname = 'auth all financeiro storage') then
+    create policy "auth all financeiro storage" on storage.objects for all
+      using (bucket_id = 'financeiro' and auth.role() = 'authenticated')
+      with check (bucket_id = 'financeiro' and auth.role() = 'authenticated');
+  end if;
+end $$;

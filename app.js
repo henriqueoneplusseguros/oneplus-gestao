@@ -47,7 +47,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [],
+    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [],
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -393,7 +393,8 @@ async function loadAll(){
             sb.from("historico_reajustes").select("*").order("data_reajuste",{ascending:false}),
             sb.from("boletos_clientes").select("*"),
             sb.from("carencia_modelos").select("*").order("nome"),
-            sb.from("lead_notas").select("*").order("criado_em",{ascending:false})
+            sb.from("lead_notas").select("*").order("criado_em",{ascending:false}),
+            sb.from("comissoes_recebidas").select("*").order("data_recebimento",{ascending:false})
     ]);
     var errs = results.filter(function(r){return r.error;});
     if(errs.length){ console.error(errs); toast("Alguns dados não carregaram — veja o console."); }
@@ -413,6 +414,7 @@ async function loadAll(){
     state.boletos_clientes = results[13].data || [];
     state.carencia_modelos = results[14].data || [];
     state.lead_notas = results[15].data || [];
+    state.comissoes_recebidas = results[16].data || [];
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
   render();
@@ -433,7 +435,8 @@ async function reload(table){
         historico_reajustes: function(){ return sb.from("historico_reajustes").select("*").order("data_reajuste",{ascending:false}); },
         boletos_clientes: function(){ return sb.from("boletos_clientes").select("*"); },
         carencia_modelos: function(){ return sb.from("carencia_modelos").select("*").order("nome"); },
-        lead_notas: function(){ return sb.from("lead_notas").select("*").order("criado_em",{ascending:false}); }
+        lead_notas: function(){ return sb.from("lead_notas").select("*").order("criado_em",{ascending:false}); },
+        comissoes_recebidas: function(){ return sb.from("comissoes_recebidas").select("*").order("data_recebimento",{ascending:false}); }
   };
   var r = await map[table]();
   if(r.error){ console.error(r.error); toast("Erro ao atualizar "+table); return; }
@@ -451,6 +454,11 @@ function currentUserName(){
 function emailDoResponsavel(nome){
   var e = state.equipe.filter(function(x){ return x.nome===nome; })[0];
   return e ? e.email : null;
+}
+/* Financeiro é restrito — só Henrique e Kelly veem esse setor. */
+function podeVerFinanceiro(){
+  var nome = currentUserName();
+  return nome==="Henrique" || nome==="Kelly";
 }
 /* Tarefas do usuário logado que já venceram ou vencem hoje e ainda não foram concluídas. */
 function minhasTarefasPendentes(){
@@ -526,6 +534,7 @@ var NAV = [
   {id:"tarefas", label:"Tarefas", icon:"check"},
   {id:"agenda", label:"Agenda", icon:"calendar"},
   {id:"posvenda", label:"Pós-venda", icon:"message"},
+  {id:"financeiro", label:"Financeiro", icon:"receipt"},
   {id:"parametros", label:"Parâmetros", icon:"sliders"}
 ];
 var ICONS = {
@@ -542,7 +551,8 @@ var ICONS = {
 };
 function renderNav(){
   var nav = document.getElementById("nav");
-  nav.innerHTML = NAV.map(function(n){
+  var itens = NAV.filter(function(n){ return n.id!=="financeiro" || podeVerFinanceiro(); });
+  nav.innerHTML = itens.map(function(n){
     return '<div class="navitem'+(state.tab===n.id?' active':'')+'" data-tab="'+n.id+'">'+ICONS[n.icon]+'<span>'+n.label+'</span></div>';
   }).join("");
   Array.prototype.forEach.call(nav.querySelectorAll(".navitem"), function(el){
@@ -564,6 +574,7 @@ function render(){
   else if(state.tab==="atendimentos"){ posvendaSection="atendimentos"; main.innerHTML = viewPosvenda(); }
   else if(state.tab==="posvenda") main.innerHTML = viewPosvenda();
   else if(state.tab==="boletos"){ posvendaSection="boletos"; main.innerHTML = viewPosvenda(); }
+  else if(state.tab==="financeiro") main.innerHTML = podeVerFinanceiro()? viewFinanceiro() : '<div class="empty">Você não tem acesso a este setor.</div>';
   else if(state.tab==="parametros") main.innerHTML = viewParametros();
   wireActions();
 }
@@ -689,8 +700,9 @@ function clienteFormHtml(c, deps){
   return ''+
   '<fieldset><legend>Titular</legend>'+
   '<div class="field row2"><div class="field"><label>Nome do titular</label><input id="f-titular" value="'+escapeHtml(c.titular_nome||"")+'"></div><div class="field"><label>Razão social (se PJ)</label><input id="f-razao" value="'+escapeHtml(c.razao_social||"")+'"></div></div>'+
-  '<div class="field row3"><div class="field"><label>CNPJ (empresa)</label><input id="f-cnpj" value="'+escapeHtml(c.cnpj_cpf||"")+'" placeholder="00.000.000/0000-00" maxlength="18"></div><div class="field"><label>CPF (titular)</label><input id="f-cpf" value="'+escapeHtml(c.cpf||"")+'" placeholder="000.000.000-00" maxlength="14"></div><div class="field"><label>Data de nascimento <span id="f-idade-out" class="muted"></span></label><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"></div></div>'+
+  '<div class="field row3"><div class="field"><label>CNPJ (empresa)</label><input id="f-cnpj" value="'+escapeHtml(c.cnpj_cpf||"")+'" placeholder="00.000.000/0000-00" maxlength="18"></div><div class="field"><label>CPF (titular)</label><input id="f-cpf" value="'+escapeHtml(c.cpf||"")+'" placeholder="000.000.000-00" maxlength="14"></div><div class="field"><label>RG (titular)</label><input id="f-rg" value="'+escapeHtml(c.rg||"")+'"></div></div>'+
   '<div class="muted" id="f-cnpj-status" style="font-size:11.5px;"></div>'+
+  '<div class="field row2"><div class="field"><label>Data de nascimento <span id="f-idade-out" class="muted"></span></label><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"></div><div class="field"></div></div>'+
   '<div class="field row3"><div class="field"><label>E-mail</label><input type="email" id="f-email" value="'+escapeHtml(c.email||"")+'"></div><div class="field"><label>Telefone (WhatsApp)</label><input id="f-telefone" value="'+escapeHtml(c.telefone||"")+'"></div><div class="field"><label>Nº da carteirinha</label><input id="f-carteirinha" value="'+escapeHtml(c.numero_carteirinha||"")+'"></div></div>'+
   '<div class="field"><label>Responsável financeiro (quem recebe o boleto, se for diferente do titular)</label><input id="f-resp-financeiro" value="'+escapeHtml(c.responsavel_financeiro||"")+'" placeholder="ex: nome de quem cuida do financeiro na empresa"></div>'+
   '<div class="field"><label>Link da pasta no Drive (documentos do cliente)</label><input id="f-drive-link" value="'+escapeHtml(c.drive_link||"")+'" placeholder="https://drive.google.com/..."></div>'+
@@ -957,6 +969,7 @@ function readClienteForm(){
       razao_social: document.getElementById("f-razao").value.trim(),
       cnpj_cpf: document.getElementById("f-cnpj").value.trim(),
       cpf: document.getElementById("f-cpf").value.trim(),
+      rg: document.getElementById("f-rg").value.trim(),
       responsavel_financeiro: document.getElementById("f-resp-financeiro").value.trim(),
       drive_link: document.getElementById("f-drive-link").value.trim(),
       data_nascimento: document.getElementById("f-nasc").value || null,
@@ -999,9 +1012,9 @@ function readClienteForm(){
     deps: deps
   };
 }
-function openClienteModal(existing, afterSave){
+function openClienteModal(existing, afterSave, seedDeps){
   var isEdit = !!(existing && existing.id);
-  var deps = isEdit? depsOf(existing.id) : [];
+  var deps = isEdit? depsOf(existing.id) : (seedDeps || []);
   openModal(isEdit?"Editar cliente":"Novo cliente", clienteFormHtml(existing, deps), async function(closeFn){
     var parsed = readClienteForm();
     if(existing && existing.lead_id) parsed.data.lead_id = existing.lead_id;
@@ -1193,6 +1206,92 @@ function openBoletoModal(cliente, mk){
   Array.prototype.forEach.call(document.querySelectorAll("[data-baixar-anexo]"), function(btn){
     btn.onclick = function(){ baixarBoletoAnexo(btn.getAttribute("data-baixar-anexo")); };
   });
+}
+
+/* ================= FINANCEIRO (acesso restrito: só Henrique e Kelly) =================
+   Comissionamento recebido por cliente (com anexo do demonstrativo) e baixa de cliente.
+   Reaproveita o bucket de storage próprio "financeiro" e a tabela comissoes_recebidas. */
+function totalComissoesCliente(clienteId){
+  return state.comissoes_recebidas.filter(function(c){ return c.cliente_id===clienteId; }).reduce(function(s,c){ return s+(c.valor||0); },0);
+}
+async function uploadFinanceiroArquivo(clienteId, tipo, file){
+  var ext = (file.name.split(".").pop()||"pdf").toLowerCase();
+  var path = clienteId+"/"+tipo+"-"+Date.now()+"."+ext;
+  var up = await sb.storage.from("financeiro").upload(path, file, {upsert:true});
+  if(up.error){ toast("Erro ao enviar arquivo: "+up.error.message); return null; }
+  return path;
+}
+async function baixarFinanceiroArquivo(path){
+  var r = await sb.storage.from("financeiro").createSignedUrl(path, 3600);
+  if(r.error || !r.data){ toast("Erro ao gerar link do arquivo."); return; }
+  window.open(r.data.signedUrl, "_blank");
+}
+function viewFinanceiro(){
+  var clientes = state.clientes.slice().sort(function(a,b){ return clienteLabel(a).localeCompare(clienteLabel(b)); });
+  var header = '<div class="topbar"><div><h1>Financeiro</h1><div class="desc">Acesso restrito (Henrique e Kelly) · comissionamento recebido, demonstrativos e baixa de cliente</div></div></div>';
+  if(!clientes.length) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum cliente cadastrado ainda.</div></div></div>';
+  return header + '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr><th>Cliente</th><th class="num">Valor contrato</th><th class="num">Comissão recebida</th><th>Status</th><th></th></tr></thead><tbody>'+
+    clientes.map(function(c){
+      var total = totalComissoesCliente(c.id);
+      return '<tr>'+
+        '<td>'+escapeHtml(clienteLabel(c))+'</td>'+
+        '<td class="num">'+fmtMoney(c.valor_contrato_total)+'</td>'+
+        '<td class="num">'+fmtMoney(total)+'</td>'+
+        '<td>'+(c.baixado_financeiro? '<span class="pill pill-ok">baixado'+(c.baixado_financeiro_em? ' em '+fmtDateISO(c.baixado_financeiro_em):'')+'</span>' : '<span class="pill pill-warn">em aberto</span>')+'</td>'+
+        '<td><button class="linklike" data-abrir-financeiro-cliente="'+c.id+'">abrir</button></td>'+
+      '</tr>';
+    }).join("")+
+    '</tbody></table></div></div>';
+}
+function openFinanceiroModal(cliente){
+  var comissoes = state.comissoes_recebidas.filter(function(c){ return c.cliente_id===cliente.id; })
+    .sort(function(a,b){ return (b.data_recebimento||"")<(a.data_recebimento||"")?-1:1; });
+  var body =
+    '<div class="kv-list" style="margin-bottom:12px;">'+
+      '<div class="kv-row"><span class="k">Valor do contrato</span><span>'+fmtMoney(cliente.valor_contrato_total)+'</span></div>'+
+      '<div class="kv-row"><span class="k">Total recebido</span><span><b>'+fmtMoney(totalComissoesCliente(cliente.id))+'</b></span></div>'+
+    '</div>'+
+    '<label class="rowflex" style="font-weight:400;margin-bottom:12px;"><input type="checkbox" id="fin-baixado" '+(cliente.baixado_financeiro?"checked":"")+'> Cliente baixado (encerrado financeiramente)</label>'+
+    '<fieldset><legend>Lançar comissionamento recebido</legend>'+
+      '<div class="field row3">'+moneyFieldHtml("fin-valor", null, "Valor recebido (R$)")+'<div class="field"><label>Data de recebimento</label><input type="date" id="fin-data" value="'+todayISO()+'"></div><div class="field"><label>Mês de referência</label><input id="fin-mes" placeholder="ex: 2026-09"></div></div>'+
+      '<div class="field"><label>Observações</label><input id="fin-obs"></div>'+
+      '<div class="field"><label>Demonstrativo (opcional)</label><input type="file" id="fin-arquivo" accept="application/pdf,image/*"></div>'+
+      '<button type="button" class="btn btn-primary" id="fin-add" style="margin-top:6px;">+ lançar</button>'+
+    '</fieldset>'+
+    '<fieldset style="margin-top:12px;"><legend>Histórico</legend>'+
+      (comissoes.length? comissoes.map(function(c){
+        return '<div class="activity-item" style="margin-top:6px;">'+
+          '<div><b>'+fmtMoney(c.valor)+'</b>'+(c.mes_referencia? ' · '+monthLabel(c.mes_referencia):'')+'</div>'+
+          '<div class="meta">'+(c.data_recebimento? fmtDateISO(c.data_recebimento):"—")+(c.observacoes? ' · '+escapeHtml(c.observacoes):'')+(c.arquivo_path? ' · <button class="linklike" data-baixar-financeiro="'+escapeHtml(c.arquivo_path)+'">baixar demonstrativo</button>':'')+'</div>'+
+        '</div>';
+      }).join("") : '<div class="empty">Nenhum lançamento ainda.</div>')+
+    '</fieldset>';
+  openModal("Financeiro — "+clienteLabel(cliente), body, function(closeFn){ closeFn(); }, "Fechar");
+
+  var baixadoEl = document.getElementById("fin-baixado");
+  if(baixadoEl) baixadoEl.onchange = function(){
+    dbUpdate("clientes", cliente.id, {baixado_financeiro: baixadoEl.checked, baixado_financeiro_em: baixadoEl.checked? new Date().toISOString() : null});
+  };
+  var addBtn = document.getElementById("fin-add");
+  if(addBtn) addBtn.onclick = async function(){
+    var valor = parseMoneyBR(document.getElementById("fin-valor").value);
+    if(!valor){ toast("Informe o valor recebido."); return; }
+    var fileEl = document.getElementById("fin-arquivo");
+    var arquivoPath = null;
+    if(fileEl.files[0]) arquivoPath = await uploadFinanceiroArquivo(cliente.id, "demonstrativo", fileEl.files[0]);
+    await dbInsert("comissoes_recebidas", {
+      cliente_id: cliente.id, valor: valor,
+      data_recebimento: document.getElementById("fin-data").value || null,
+      mes_referencia: document.getElementById("fin-mes").value.trim() || null,
+      observacoes: document.getElementById("fin-obs").value.trim(),
+      arquivo_path: arquivoPath
+    });
+    openFinanceiroModal(cliente);
+  };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-baixar-financeiro]"), function(btn){
+    btn.onclick = function(){ baixarFinanceiroArquivo(btn.getAttribute("data-baixar-financeiro")); };
+  });
+  wireMoneyInputs(document.getElementById("modal-body"));
 }
 
 /* ================= CLIENTES: Excel (importar / exportar) ================= */
@@ -1749,7 +1848,6 @@ function viewFunilKanban(byEtapa, agoraISO){
           '<select class="lead-etapa kanban-card-noopen" data-lead="'+l.id+'" style="margin-top:8px;">'+ETAPAS.map(function(e2){return '<option'+(l.etapa===e2?' selected':'')+'>'+e2+'</option>';}).join("")+'</select>'+
           '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
             '<button class="linklike" data-edit-lead="'+l.id+'">editar</button>'+
-            (l.etapa==="Ganho"? '<button class="linklike" data-convert-lead="'+l.id+'">virar cliente</button>' : '')+
             '<button class="linklike" data-agendar-tarefa-lead="'+l.id+'">+ tarefa</button>'+
           '</div>'+
         '</div>';
@@ -2006,6 +2104,25 @@ function viewImplantacao(){
   }).join("")+'</div>';
   return header + board;
 }
+/* Pré-cadastro: RG, CPF, dependentes, plano etc. já ficam registrados durante a implantação
+   (documentos chegam aos poucos), mas guardados só em implantacoes.pre_cadastro (JSON) — não
+   cria linha em "clientes" ainda. Reaproveita o mesmo formulário/leitura do cadastro real. */
+function openPreCadastroModal(lead){
+  var imp = implantacaoDoLead(lead.id) || {};
+  var draft = imp.pre_cadastro || null;
+  var seed = (draft && draft.data) || {produto: lead.produto, titular_nome: lead.nome, razao_social: lead.empresa, vendedor: lead.vendedor, valor_contrato_total: lead.valor_estimado, plano_nome: (lead.operadora||""), status:"Ativo", data_inclusao: todayISO()};
+  var seedDeps = (draft && draft.deps) || [];
+  openModal("Pré-cadastro (documentos) — "+(lead.nome||lead.empresa||"—"), clienteFormHtml(seed, seedDeps), function(closeFn){
+    var parsed = readClienteForm();
+    var patch = {pre_cadastro: parsed};
+    var imp2 = implantacaoDoLead(lead.id);
+    if(imp2){ dbUpdate("implantacoes", imp2.id, patch).then(function(){ openImplantacaoModal(lead); }); }
+    else { patch.lead_id = lead.id; patch.responsavel = "Kelly"; dbInsert("implantacoes", patch).then(function(){ openImplantacaoModal(lead); }); }
+    closeFn();
+  }, "Salvar pré-cadastro");
+  wireClienteFormExtra();
+  wireClienteFormDeps();
+}
 function openImplantacaoModal(lead){
   var imp = implantacaoDoLead(lead.id) || {};
   var cli = clienteDoLead(lead.id);
@@ -2013,12 +2130,14 @@ function openImplantacaoModal(lead){
   var mesAtual = todayMonthKey();
   var boletoEmDia = imp.boleto_mes_referencia === mesAtual;
   var tarefas = tarefasDoLead(lead.id);
+  var preCadastroPreenchido = !!(imp.pre_cadastro && imp.pre_cadastro.data && (imp.pre_cadastro.data.titular_nome || imp.pre_cadastro.data.razao_social));
   var body =
     (operadoraTag(lead)? '<div style="margin-bottom:10px;">'+operadoraTag(lead)+'</div>' : '')+
     '<div class="helpbox">'+(
       cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' :
-      estagio>=ESTAGIO_ONBOARD? '⚠️ Onboard feito, mas o cadastro do cliente ainda não foi concluído.'+' <button class="linklike" data-convert-lead="'+lead.id+'">completar cadastro</button>' :
-      '🔒 Vira cliente de verdade só depois do onboard (boas-vindas) — evita cadastrar antes de saber se a operadora aprova.'
+      '📋 '+(preCadastroPreenchido? 'Pré-cadastro preenchido (RG, CPF, dependentes, plano...).' : 'Pré-cadastro ainda vazio — preencha assim que os documentos chegarem.')+
+      ' <button class="linklike" id="im-pre-cadastro">'+(preCadastroPreenchido?'editar':'preencher')+' pré-cadastro</button>'+
+      (estagio>=ESTAGIO_ONBOARD? ' · <button class="linklike" id="im-tornar-cliente">✅ tornar cliente</button>' : ' · <span class="muted">"tornar cliente" libera depois do onboard</span>')
     )+'</div>'+
     '<div class="field"><label>Etapa</label><select id="im-estagio">'+IMPLANTACAO_ETAPAS.map(function(e,i){ return '<option value="'+i+'"'+(estagio===i?' selected':'')+'>'+e+'</option>'; }).join("")+'</select></div>'+
     '<div class="field row2"><div class="field"><label>Responsável</label><select id="im-resp">'+TEAM.map(function(t){return '<option'+((imp.responsavel||"Kelly")===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div><div class="field"></div></div>'+
@@ -2050,9 +2169,17 @@ function openImplantacaoModal(lead){
     closeFn();
   }, "Salvar");
 
-  var convertBtn = document.getElementById("modal-body") ? document.querySelector("#modal-body [data-convert-lead]") : null;
-  if(convertBtn) convertBtn.onclick = function(){
-    openClienteModal({lead_id:lead.id, titular_nome:lead.nome, razao_social:lead.empresa, produto:lead.produto, plano_nome:(lead.operadora||""), vendedor:lead.vendedor, valor_contrato_total:lead.valor_estimado, data_fechamento:lead.data_ganho||todayISO(), data_inclusao:todayISO(), status:"Ativo"});
+  var preCadastroBtn = document.getElementById("im-pre-cadastro");
+  if(preCadastroBtn) preCadastroBtn.onclick = function(){ openPreCadastroModal(lead); };
+  var tornarClienteBtn = document.getElementById("im-tornar-cliente");
+  if(tornarClienteBtn) tornarClienteBtn.onclick = function(){
+    var draft = imp.pre_cadastro;
+    var seed = (draft && draft.data) || {titular_nome:lead.nome, razao_social:lead.empresa, produto:lead.produto, plano_nome:(lead.operadora||""), vendedor:lead.vendedor, valor_contrato_total:lead.valor_estimado, status:"Ativo"};
+    seed.lead_id = lead.id;
+    if(!seed.data_fechamento) seed.data_fechamento = lead.data_ganho||todayISO();
+    if(!seed.data_inclusao) seed.data_inclusao = todayISO();
+    var seedDeps = (draft && draft.deps) || [];
+    openClienteModal(seed, function(){ openImplantacaoModal(lead); }, seedDeps);
   };
   var boletoBtn = document.getElementById("im-boleto-enviado");
   if(boletoBtn) boletoBtn.onclick = function(){
@@ -2079,7 +2206,13 @@ function finalizarImplantacao(leadId){
   }
   if(!cli){
     if(!l) return;
-    openClienteModal({lead_id:leadId, titular_nome:l.nome, razao_social:l.empresa, produto:l.produto, plano_nome:(l.operadora||""), vendedor:l.vendedor, valor_contrato_total:l.valor_estimado, data_fechamento:l.data_ganho||todayISO(), data_inclusao:todayISO(), status:"Ativo"}, marcarConcluida);
+    var imp0 = implantacaoDoLead(leadId);
+    var draft = imp0 && imp0.pre_cadastro;
+    var seed = (draft && draft.data) || {titular_nome:l.nome, razao_social:l.empresa, produto:l.produto, plano_nome:(l.operadora||""), vendedor:l.vendedor, valor_contrato_total:l.valor_estimado, status:"Ativo"};
+    seed.lead_id = leadId;
+    if(!seed.data_fechamento) seed.data_fechamento = l.data_ganho||todayISO();
+    if(!seed.data_inclusao) seed.data_inclusao = todayISO();
+    openClienteModal(seed, marcarConcluida, (draft && draft.deps) || []);
     return;
   }
   if(!confirm('Concluir a implantação de "'+clienteLabel(cli)+'"? Ela vai sumir da aba Implantação (o cadastro continua em Clientes).')) return;
@@ -2592,6 +2725,12 @@ function wireActions(){
       if(c) openBoletoModal(c, todayMonthKey());
     });
   });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-abrir-financeiro-cliente]"), function(btn){
+    btn.onclick = function(){
+      var c = state.clientes.filter(function(x){return x.id===btn.getAttribute("data-abrir-financeiro-cliente");})[0];
+      if(c) openFinanceiroModal(c);
+    };
+  });
   var btnSalvarMeta = document.getElementById("btn-salvar-meta");
   if(btnSalvarMeta) btnSalvarMeta.onclick = async function(){
     var mk = todayMonthKey();
@@ -2600,11 +2739,6 @@ function wireActions(){
     if(existing){ await dbUpdate("metas_mensais", existing.id, {valor_meta:valor}); }
     else { await dbInsert("metas_mensais", {mes:mk, valor_meta:valor}); }
   };
-  Array.prototype.forEach.call(document.querySelectorAll("[data-convert-lead]"), function(btn){
-    btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-convert-lead");})[0]; if(!l) return;
-      openClienteModal({lead_id:l.id, titular_nome:l.nome, razao_social:l.empresa, produto:l.produto, plano_nome:(l.operadora||""), vendedor:l.vendedor, valor_contrato_total:l.valor_estimado, data_fechamento:l.data_ganho||todayISO(), data_inclusao:todayISO(), status:"Ativo"});
-    };
-  });
   Array.prototype.forEach.call(document.querySelectorAll("[data-agendar-tarefa-lead]"), function(btn){
     btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-agendar-tarefa-lead");})[0]; if(l) openLeadTarefaModal(l); };
   });
