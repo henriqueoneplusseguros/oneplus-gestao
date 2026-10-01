@@ -1794,6 +1794,53 @@ function metaChartHtml(mk){
     ) : '<div class="empty">Defina a meta de vendas do mês acima para ver o gráfico de progresso.</div>')+
     '</div></div>';
 }
+/* Histórico de vendas mês a mês — não some quando o mês vira: lê direto de state.leads
+   (negócios "Ganho" nunca são apagados, só saem do Kanban) e de state.metas_mensais,
+   então os últimos 12 meses ficam sempre visíveis, mesmo depois que o mês atual mudar. */
+function historicoVendasTableHtml(mesAtual){
+  var meses=[]; for(var i=0;i<12;i++){ meses.push(monthKeyAdd(mesAtual,-i)); }
+  return '<div class="card"><div class="card-head"><h2>Histórico de vendas por mês</h2><div class="meta">clique num mês para ver os negócios ganhos</div></div>'+
+    '<div class="card-body tablewrap"><table class="grid"><thead><tr><th>Mês</th><th class="num">Vendido</th><th class="num">Meta</th><th class="num">Diferença</th><th class="num">Negócios ganhos</th></tr></thead><tbody>'+
+    meses.map(function(mk){
+      var vendido = vendasValorDoMes(mk);
+      var meta = metaValorDoMes(mk);
+      var qtd = vendasQtdDoMes(mk);
+      var diff = vendido-meta;
+      var semDado = vendido===0 && meta===0;
+      return '<tr class="rowlink" data-ver-historico-mes="'+mk+'" style="cursor:pointer;'+(semDado?'opacity:.55;':'')+'">'+
+        '<td>'+monthLabel(mk)+(mk===mesAtual?' <span class="tag">atual</span>':'')+'</td>'+
+        '<td class="num">'+fmtMoney(vendido)+'</td>'+
+        '<td class="num">'+(meta? fmtMoney(meta) : '—')+'</td>'+
+        '<td class="num" style="color:'+(meta? (diff>=0?'var(--success)':'var(--danger)') : 'inherit')+'">'+(meta? fmtMoney(diff) : '—')+'</td>'+
+        '<td class="num">'+qtd+'</td>'+
+      '</tr>';
+    }).join("")+
+    '</tbody></table></div></div>';
+}
+function openHistoricoMesModal(mk){
+  var leads = leadsGanhosDoMes(mk).slice().sort(function(a,b){ return (a.data_ganho||"")<(b.data_ganho||"")?1:-1; });
+  var vendido = vendasValorDoMes(mk);
+  var meta = metaValorDoMes(mk);
+  var diff = vendido-meta;
+  var resumo = '<div class="rowflex" style="justify-content:space-between;margin-bottom:12px;font-size:13px;">'+
+    '<span><b>'+fmtMoney(vendido)+'</b> vendido · '+leads.length+' negócio(s)</span>'+
+    (meta? '<span class="muted">Meta: '+fmtMoney(meta)+' — '+(diff>=0? 'superada em '+fmtMoney(diff) : 'faltaram '+fmtMoney(-diff)+' para bater')+'</span>' : '<span class="muted">Meta não definida para este mês</span>')+
+  '</div>';
+  var body = resumo+(leads.length?
+    '<div class="tablewrap"><table class="grid"><thead><tr><th>Nome/Empresa</th><th>Produto</th><th>Vendedor(a)</th><th>Operadora</th><th class="num">Valor</th><th>Ganho em</th></tr></thead><tbody>'+
+    leads.map(function(l){
+      return '<tr><td>'+escapeHtml(l.nome||"—")+(l.empresa?' <span class="muted">('+escapeHtml(l.empresa)+')</span>':'')+'</td>'+
+        '<td>'+escapeHtml(l.produto||"—")+'</td>'+
+        '<td>'+escapeHtml(l.vendedor||"—")+'</td>'+
+        '<td>'+escapeHtml(l.operadora||"—")+'</td>'+
+        '<td class="num">'+fmtMoney(l.valor_estimado)+'</td>'+
+        '<td>'+fmtDateISO(l.data_ganho)+'</td>'+
+      '</tr>';
+    }).join("")+
+    '</tbody></table></div>' :
+    '<div class="empty">Nenhum negócio ganho neste mês.</div>');
+  openModal("Vendas — "+monthLabel(mk), body, function(closeFn){ closeFn(); }, "Fechar");
+}
 var funilView = "kanban"; // "kanban" ou "lista"
 var funilFiltro = {busca:"", vendedor:"", produto:"", atrasados:false};
 function leadsFiltrados(){
@@ -1857,6 +1904,7 @@ function viewFunil(){
   '</div>';
 
   var metaChart = metaChartHtml(mesAtual);
+  var historicoVendas = historicoVendasTableHtml(mesAtual);
 
   var atrasoBanner = "";
   if(tarefasAtrasadas.length){
@@ -1872,7 +1920,7 @@ function viewFunil(){
   var filterBar = funilFilterBarHtml();
   var corpo = funilView==="lista" ? viewFunilLista(leadsBase, agoraISO) : viewFunilKanban(byEtapa, agoraISO);
 
-  return header + pipeTiles + metaChart + atrasoBanner + filterBar + corpo;
+  return header + pipeTiles + metaChart + historicoVendas + atrasoBanner + filterBar + corpo;
 }
 function viewFunilKanban(byEtapa, agoraISO){
   var ETAPAS_PIPELINE = ETAPAS.filter(function(e){ return e!=="Ganho"; });
@@ -2802,6 +2850,9 @@ function wireActions(){
     if(existing){ await dbUpdate("metas_mensais", existing.id, {valor_meta:valor}); }
     else { await dbInsert("metas_mensais", {mes:mk, valor_meta:valor}); }
   };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ver-historico-mes]"), function(tr){
+    tr.addEventListener("click", function(){ openHistoricoMesModal(tr.getAttribute("data-ver-historico-mes")); });
+  });
   Array.prototype.forEach.call(document.querySelectorAll("[data-agendar-tarefa-lead]"), function(btn){
     btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-agendar-tarefa-lead");})[0]; if(l) openLeadTarefaModal(l); };
   });
