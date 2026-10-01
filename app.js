@@ -1796,10 +1796,19 @@ function metaChartHtml(mk){
 }
 /* Histórico de vendas mês a mês — não some quando o mês vira: lê direto de state.leads
    (negócios "Ganho" nunca são apagados, só saem do Kanban) e de state.metas_mensais,
-   então os últimos 12 meses ficam sempre visíveis, mesmo depois que o mês atual mudar. */
+   então os últimos 12 meses ficam sempre visíveis, mesmo depois que o mês atual mudar.
+   Fica recolhido por padrão (só o título + botão) pra não ocupar a tela toda do Funil —
+   o botão "ver histórico"/"ocultar" alterna historicoVendasAberto e manda re-renderizar. */
+var historicoVendasAberto = false;
 function historicoVendasTableHtml(mesAtual){
+  var toggleBtn = '<button class="btn btn-ghost" id="btn-toggle-historico-vendas" type="button">'+(historicoVendasAberto? 'Ocultar' : 'Ver histórico')+'</button>';
+  var head = '<div class="card-head"><h2>Histórico de vendas por mês</h2>'+
+    '<div class="meta">'+(historicoVendasAberto? 'clique num mês para ver os negócios ganhos' : 'últimos 12 meses — vendido, meta e diferença')+'</div>'+
+    toggleBtn+
+  '</div>';
+  if(!historicoVendasAberto){ return '<div class="card">'+head+'</div>'; }
   var meses=[]; for(var i=0;i<12;i++){ meses.push(monthKeyAdd(mesAtual,-i)); }
-  return '<div class="card"><div class="card-head"><h2>Histórico de vendas por mês</h2><div class="meta">clique num mês para ver os negócios ganhos</div></div>'+
+  return '<div class="card">'+head+
     '<div class="card-body tablewrap"><table class="grid"><thead><tr><th>Mês</th><th class="num">Vendido</th><th class="num">Meta</th><th class="num">Diferença</th><th class="num">Negócios ganhos</th></tr></thead><tbody>'+
     meses.map(function(mk){
       var vendido = vendasValorDoMes(mk);
@@ -2865,6 +2874,8 @@ function wireActions(){
   Array.prototype.forEach.call(document.querySelectorAll("[data-ver-historico-mes]"), function(tr){
     tr.addEventListener("click", function(){ openHistoricoMesModal(tr.getAttribute("data-ver-historico-mes")); });
   });
+  var btnToggleHistoricoVendas = document.getElementById("btn-toggle-historico-vendas");
+  if(btnToggleHistoricoVendas) btnToggleHistoricoVendas.onclick = function(){ historicoVendasAberto = !historicoVendasAberto; render(); };
   Array.prototype.forEach.call(document.querySelectorAll("[data-agendar-tarefa-lead]"), function(btn){
     btn.onclick=function(){ var l=state.leads.filter(function(x){return x.id===btn.getAttribute("data-agendar-tarefa-lead");})[0]; if(l) openLeadTarefaModal(l); };
   });
