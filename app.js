@@ -16,7 +16,7 @@ var VENDEDORES = ["Henrique","Alana"];
 var PRODUTOS = ["Saúde","Vida","Consórcio"];
 var ETAPAS = ["Qualificação","Primeiro Contato","Proposta Enviada","Negociação","Ganho","Perdido"];
 var LIMITE_DIAS_PARADO = 14; // acima disso o cartão ganha o selo de "negócio parado"
-var MOTIVOS_PERDA = ["Preço","Concorrência","Sem retorno do cliente","Desistiu","Outro"];
+var MOTIVOS_PERDA = ["Preço","Concorrência","Sem retorno do cliente","Desistiu","Desistência após fechamento (durante a implantação)","Outro"];
 var OPERADORAS = ["Omint","Care Plus","Amil","SulAmérica","Bradesco","NotreDame","Prevent Sênior","MedSênior","Porto Seguro","São Cristóvão","Ever","Alice","Outros"];
 var CANAIS = ["WhatsApp","Ligação","E-mail","Presencial"];
 var CANAIS_TAREFA = ["Ligar","Reunião","WhatsApp","E-mail","Outro"];
@@ -2193,6 +2193,7 @@ function viewImplantacao(){
           '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
             (idx===ESTAGIO_ONBOARD? '<button class="linklike" data-finalizar-implantacao="'+l.id+'">concluir</button>' : '')+
             '<button class="linklike" data-agendar-tarefa-lead="'+l.id+'">+ tarefa</button>'+
+            '<button class="linklike" data-perdido-implantacao="'+l.id+'" style="color:var(--danger);">cliente desistiu</button>'+
             '<button class="linklike" data-excluir-implantacao="'+l.id+'" style="color:var(--danger);">excluir</button>'+
           '</div>'+
         '</div>';
@@ -2315,9 +2316,17 @@ function finalizarImplantacao(leadId){
   if(!confirm('Concluir a implantação de "'+clienteLabel(cli)+'"? Ela vai sumir da aba Implantação (o cadastro continua em Clientes).')) return;
   marcarConcluida();
 }
+/* Botão "cliente desistiu" (ao lado de "excluir"): usado quando o negócio já foi marcado
+   "Ganho" e está na Implantação, mas o cliente desiste antes de virar cliente de verdade
+   (ex: no momento do boleto/contrato). Em vez de apagar o negócio, volta a etapa pra
+   "Perdido" (reaproveitando o fluxo de motivo de perda já existente no Funil) — isso tira
+   o valor automaticamente da meta e do histórico de vendas do mês (que só contam "Ganho"),
+   mas mantém o registro do negócio pra histórico/relatório de motivos de perda. Veja também
+   excluirImplantacao() logo abaixo, que apaga de vez (pra registros de teste/engano). */
 /* Exclui de vez um negócio que não vai mais seguir (cliente desistiu etc.) — apaga o negócio,
    o pré-cadastro/implantação e as tarefas ligadas a ele. Se ele já tinha virado cliente de
-   verdade, o cadastro em "Clientes" continua intacto (não é apagado por engano). */
+   verdade, o cadastro em "Clientes" continua intacto (não é apagado por engano). Para manter
+   o histórico (recomendado), use o botão "cliente desistiu" em vez deste. */
 function excluirImplantacao(leadId){
   var l = state.leads.filter(function(x){ return x.id===leadId; })[0];
   if(!l) return;
@@ -2795,6 +2804,9 @@ function wireActions(){
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-excluir-implantacao]"), function(btn){
     btn.onclick = function(){ excluirImplantacao(btn.getAttribute("data-excluir-implantacao")); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-perdido-implantacao]"), function(btn){
+    btn.onclick = function(){ requestEtapaChange(btn.getAttribute("data-perdido-implantacao"), "Perdido", undefined, function(){ render(); }); };
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-drag-impl-lead]"), function(card){
     card.addEventListener("dragstart", function(e){
