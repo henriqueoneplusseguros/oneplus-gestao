@@ -698,7 +698,8 @@ function clienteFormHtml(c, deps, opts){
   deps = deps || [];
   opts = opts || {};
   /* Modo pré-cadastro (Implantação, antes dos documentos chegarem): esconde CPF/RG/
-     carteirinha do titular (ainda não dá pra preencher) e renomeia "Titular" pra
+     carteirinha e data de nascimento do titular (ainda não dá pra preencher — isso é
+     feito depois, ao cadastrar titular do plano e dependentes) e renomeia "Titular" pra
      "Responsável", já que nesse momento é só o contato da empresa. Os campos continuam
      no DOM (só escondidos), pra não quebrar readClienteForm() nem o cadastro completo
      depois — eles reaparecem normalmente quando o mesmo formulário é usado em "Editar
@@ -718,7 +719,9 @@ function clienteFormHtml(c, deps, opts){
   '<div class="field row2"><div class="field"><label>'+(pc?'Nome do responsável':'Nome do titular')+'</label><input id="f-titular" value="'+escapeHtml(c.titular_nome||"")+'"></div><div class="field"><label>Razão social (se PJ)</label><input id="f-razao" value="'+escapeHtml(c.razao_social||"")+'"></div></div>'+
   linhaDoc+
   '<div class="muted" id="f-cnpj-status" style="font-size:11.5px;"></div>'+
-  '<div class="field row2"><div class="field"><label>Data de nascimento <span id="f-idade-out" class="muted"></span></label><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"></div><div class="field"></div></div>'+
+  (pc?
+    '<div style="display:none;"><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"><span id="f-idade-out"></span></div>'
+    :'<div class="field row2"><div class="field"><label>Data de nascimento <span id="f-idade-out" class="muted"></span></label><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"></div><div class="field"></div></div>')+
   linhaContato+
   '<div class="field"><label>Responsável financeiro (quem recebe o boleto, se for diferente do titular)</label><input id="f-resp-financeiro" value="'+escapeHtml(c.responsavel_financeiro||"")+'" placeholder="ex: nome de quem cuida do financeiro na empresa"></div>'+
   '<div class="field"><label>Link da pasta no Drive (documentos do cliente)</label><input id="f-drive-link" value="'+escapeHtml(c.drive_link||"")+'" placeholder="https://drive.google.com/..."></div>'+
