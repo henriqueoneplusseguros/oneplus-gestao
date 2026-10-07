@@ -549,14 +549,40 @@ var ICONS = {
   flag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4"/><path d="M5 4h13l-3 4.5L18 13H5"/></svg>',
   receipt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>'
 };
+var NAV_GRUPOS = [
+  {nome:null, itens:["painel"]},
+  {nome:"Comercial", itens:["clientes","funil"]},
+  {nome:null, itens:["implantacao"]},
+  {nome:"Concierge", itens:["tarefas","agenda","posvenda"]},
+  {nome:"Gestão", itens:["financeiro","parametros"]}
+];
+function navGrupoAberto(nome){ try { return localStorage.getItem("op-menu-"+nome) !== "0"; } catch(e){ return true; } }
 function renderNav(){
   var nav = document.getElementById("nav");
   var itens = NAV.filter(function(n){ return n.id!=="financeiro" || podeVerFinanceiro(); });
-  nav.innerHTML = itens.map(function(n){
-    return '<div class="navitem'+(state.tab===n.id?' active':'')+'" data-tab="'+n.id+'">'+ICONS[n.icon]+'<span>'+n.label+'</span></div>';
-  }).join("");
+  var porId = {}; itens.forEach(function(n){ porId[n.id]=n; });
+  var usados = {};
+  function item(n){ usados[n.id]=1; return '<div class="navitem'+(state.tab===n.id?' active':'')+'" data-tab="'+n.id+'">'+ICONS[n.icon]+'<span>'+n.label+'</span></div>'; }
+  var html = NAV_GRUPOS.map(function(g){
+    var membros = g.itens.map(function(id){ return porId[id]; }).filter(Boolean);
+    if(!membros.length) return "";
+    if(!g.nome) return membros.map(item).join("");
+    var temAtivo = membros.some(function(n){ return n.id===state.tab; });
+    var aberto = temAtivo || navGrupoAberto(g.nome);
+    return '<div class="op-grupo'+(aberto?' aberto':'')+(temAtivo?' tem-ativo':'')+'" data-grupo="'+g.nome+'">'+
+      '<button type="button" class="op-grupo-btn" aria-expanded="'+aberto+'"><svg class="op-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg><span>'+g.nome+'</span><span class="op-grupo-n">'+membros.length+'</span></button>'+
+      '<div class="op-grupo-itens"><div>'+membros.map(item).join("")+'</div></div></div>';
+  }).join("") + itens.filter(function(n){ return !usados[n.id]; }).map(item).join("");
+  nav.innerHTML = html;
   Array.prototype.forEach.call(nav.querySelectorAll(".navitem"), function(el){
     el.addEventListener("click", function(){ state.tab = el.getAttribute("data-tab"); render(); });
+  });
+  Array.prototype.forEach.call(nav.querySelectorAll(".op-grupo-btn"), function(btn){
+    btn.addEventListener("click", function(){
+      var box = btn.parentNode, ab = box.classList.toggle("aberto");
+      btn.setAttribute("aria-expanded", ab);
+      try { localStorage.setItem("op-menu-"+box.getAttribute("data-grupo"), ab?"1":"0"); } catch(e){}
+    });
   });
 }
 
