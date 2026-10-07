@@ -693,17 +693,33 @@ function viewClientes(){
   }).join("")+'</div>');
 }
 
-function clienteFormHtml(c, deps){
+function clienteFormHtml(c, deps, opts){
   c = c || {produto:"Saúde", vendedor:"Henrique", status:"Ativo"};
   deps = deps || [];
+  opts = opts || {};
+  /* Modo pré-cadastro (Implantação, antes dos documentos chegarem): esconde CPF/RG/
+     carteirinha do titular (ainda não dá pra preencher) e renomeia "Titular" pra
+     "Responsável", já que nesse momento é só o contato da empresa. Os campos continuam
+     no DOM (só escondidos), pra não quebrar readClienteForm() nem o cadastro completo
+     depois — eles reaparecem normalmente quando o mesmo formulário é usado em "Editar
+     cliente" (clientes.html, opts.preCadastro ausente). */
+  var pc = !!opts.preCadastro;
   var banco = c.dados_bancarios || {};
+  var linhaDoc = pc ?
+    '<div class="field"><label>CNPJ (empresa)</label><input id="f-cnpj" value="'+escapeHtml(c.cnpj_cpf||"")+'" placeholder="00.000.000/0000-00" maxlength="18"></div>'+
+    '<div style="display:none;"><input id="f-cpf" value="'+escapeHtml(c.cpf||"")+'"><input id="f-rg" value="'+escapeHtml(c.rg||"")+'"></div>'
+    : '<div class="field row3"><div class="field"><label>CNPJ (empresa)</label><input id="f-cnpj" value="'+escapeHtml(c.cnpj_cpf||"")+'" placeholder="00.000.000/0000-00" maxlength="18"></div><div class="field"><label>CPF (titular)</label><input id="f-cpf" value="'+escapeHtml(c.cpf||"")+'" placeholder="000.000.000-00" maxlength="14"></div><div class="field"><label>RG (titular)</label><input id="f-rg" value="'+escapeHtml(c.rg||"")+'"></div></div>';
+  var linhaContato = pc ?
+    '<div class="field row2"><div class="field"><label>E-mail</label><input type="email" id="f-email" value="'+escapeHtml(c.email||"")+'"></div><div class="field"><label>Telefone (WhatsApp)</label><input id="f-telefone" value="'+escapeHtml(c.telefone||"")+'"></div></div>'+
+    '<div style="display:none;"><input id="f-carteirinha" value="'+escapeHtml(c.numero_carteirinha||"")+'"></div>'
+    : '<div class="field row3"><div class="field"><label>E-mail</label><input type="email" id="f-email" value="'+escapeHtml(c.email||"")+'"></div><div class="field"><label>Telefone (WhatsApp)</label><input id="f-telefone" value="'+escapeHtml(c.telefone||"")+'"></div><div class="field"><label>Nº da carteirinha</label><input id="f-carteirinha" value="'+escapeHtml(c.numero_carteirinha||"")+'"></div></div>';
   return ''+
-  '<fieldset><legend>Titular</legend>'+
-  '<div class="field row2"><div class="field"><label>Nome do titular</label><input id="f-titular" value="'+escapeHtml(c.titular_nome||"")+'"></div><div class="field"><label>Razão social (se PJ)</label><input id="f-razao" value="'+escapeHtml(c.razao_social||"")+'"></div></div>'+
-  '<div class="field row3"><div class="field"><label>CNPJ (empresa)</label><input id="f-cnpj" value="'+escapeHtml(c.cnpj_cpf||"")+'" placeholder="00.000.000/0000-00" maxlength="18"></div><div class="field"><label>CPF (titular)</label><input id="f-cpf" value="'+escapeHtml(c.cpf||"")+'" placeholder="000.000.000-00" maxlength="14"></div><div class="field"><label>RG (titular)</label><input id="f-rg" value="'+escapeHtml(c.rg||"")+'"></div></div>'+
+  '<fieldset><legend>'+(pc?'Responsável':'Titular')+'</legend>'+
+  '<div class="field row2"><div class="field"><label>'+(pc?'Nome do responsável':'Nome do titular')+'</label><input id="f-titular" value="'+escapeHtml(c.titular_nome||"")+'"></div><div class="field"><label>Razão social (se PJ)</label><input id="f-razao" value="'+escapeHtml(c.razao_social||"")+'"></div></div>'+
+  linhaDoc+
   '<div class="muted" id="f-cnpj-status" style="font-size:11.5px;"></div>'+
   '<div class="field row2"><div class="field"><label>Data de nascimento <span id="f-idade-out" class="muted"></span></label><input type="date" id="f-nasc" value="'+(c.data_nascimento||"")+'"></div><div class="field"></div></div>'+
-  '<div class="field row3"><div class="field"><label>E-mail</label><input type="email" id="f-email" value="'+escapeHtml(c.email||"")+'"></div><div class="field"><label>Telefone (WhatsApp)</label><input id="f-telefone" value="'+escapeHtml(c.telefone||"")+'"></div><div class="field"><label>Nº da carteirinha</label><input id="f-carteirinha" value="'+escapeHtml(c.numero_carteirinha||"")+'"></div></div>'+
+  linhaContato+
   '<div class="field"><label>Responsável financeiro (quem recebe o boleto, se for diferente do titular)</label><input id="f-resp-financeiro" value="'+escapeHtml(c.responsavel_financeiro||"")+'" placeholder="ex: nome de quem cuida do financeiro na empresa"></div>'+
   '<div class="field"><label>Link da pasta no Drive (documentos do cliente)</label><input id="f-drive-link" value="'+escapeHtml(c.drive_link||"")+'" placeholder="https://drive.google.com/..."></div>'+
   '</fieldset>'+
@@ -762,6 +778,7 @@ function depRowHtml(d,i,titularHint){
       '<div class="field"><label>Nome</label><input class="dep-nome" value="'+escapeHtml(d.nome||"")+'"></div>'+
       '<div class="field"><label>CPF</label><input class="dep-cpf" value="'+escapeHtml(d.cpf||"")+'"></div>'+
       '<div class="field"><label>Nascimento <span class="dep-idade-out muted">'+(d.data_nascimento? "("+ageOnISO(d.data_nascimento, todayISO())+" ano"+(ageOnISO(d.data_nascimento, todayISO())===1?"":"s")+")" : "")+'</span></label><input type="date" class="dep-nasc" value="'+(d.data_nascimento||"")+'"></div>'+
+      '<div class="field"><label>Nº carteirinha</label><input class="dep-carteirinha" value="'+escapeHtml(d.numero_carteirinha||"")+'"></div>'+
       '<div class="field"><label>Tipo</label><select class="dep-tipo">'+TIPOS_TITULARIDADE.map(function(t){return '<option'+(tipo===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div>'+
       '<div class="field"><label>Valor benefíc. (R$)</label><input type="text" inputmode="decimal" class="money-input dep-valor" value="'+escapeHtml(moneyDisplay(d.valor_beneficiario))+'" placeholder="0,00"></div>'+
       '<button type="button" class="iconbtn" data-remove-dep="'+i+'">✕</button>'+
@@ -943,13 +960,15 @@ function readClienteForm(){
     var nome = row.querySelector(".dep-nome").value.trim();
     var cpf = row.querySelector(".dep-cpf").value.trim();
     var nasc = row.querySelector(".dep-nasc").value;
+    var carteirinhaEl = row.querySelector(".dep-carteirinha");
+    var carteirinha = carteirinhaEl ? carteirinhaEl.value.trim() : "";
     var valor = parseMoneyBR(row.querySelector(".dep-valor").value);
     var tipoEl = row.querySelector(".dep-tipo");
     var tipo = tipoEl ? tipoEl.value : "Dependente";
     var titularSel = row.querySelector(".dep-titular-ref");
     var titularRefRowIndex = (tipo==="Dependente" && titularSel && titularSel.value) ? titularSel.value : null;
     if(nome||cpf||nasc) deps.push({
-      id: rowIdMap[idx], nome:nome, cpf:cpf, data_nascimento:nasc||null, valor_beneficiario:valor, tipo:tipo,
+      id: rowIdMap[idx], nome:nome, cpf:cpf, data_nascimento:nasc||null, numero_carteirinha:carteirinha, valor_beneficiario:valor, tipo:tipo,
       titular_ref_id: titularRefRowIndex ? rowIdMap[titularRefRowIndex] : null
     });
   });
@@ -1715,7 +1734,10 @@ function vendasValorDoMes(mk){ return leadsGanhosDoMes(mk).reduce(function(s,l){
 function vendasQtdDoMes(mk){ return leadsGanhosDoMes(mk).length; }
 function operadoraTag(l){
   if(!l.operadora) return "";
-  return '<span class="tag">'+escapeHtml(l.operadora)+(l.quantidade_vidas? " · "+l.quantidade_vidas+" vida"+(l.quantidade_vidas==1?"":"s") : "")+'</span>';
+  var partes = [escapeHtml(l.operadora)];
+  if(l.categoria_plano) partes.push(escapeHtml(l.categoria_plano));
+  if(l.quantidade_vidas) partes.push(l.quantidade_vidas+" vida"+(l.quantidade_vidas==1?"":"s"));
+  return '<span class="tag">'+partes.join(" · ")+'</span>';
 }
 async function setLeadEtapa(leadId, novaEtapa, motivoPerda){
   var lead = state.leads.filter(function(l){ return l.id===leadId; })[0];
@@ -2021,6 +2043,7 @@ function leadFormHtml(l){
       OPERADORAS.map(function(o){ return '<option'+(operadoraAtual===o?' selected':'')+'>'+o+'</option>'; }).join("")+
     '</select></div></div>'+
   '<div class="field" id="l-operadora-outros-wrap" style="'+(operadoraAtual==="Outros"?"":"display:none;")+'"><label>Qual operadora?</label><input id="l-operadora-outros" value="'+escapeHtml(operadoraOutrosValor)+'"></div>'+
+  '<div class="field"><label>Categoria do plano</label><input id="l-categoria-plano" value="'+escapeHtml(l.categoria_plano||"")+'" placeholder="ex: Alice Conforto, SulAmérica Clássico Vital, Amil 700..."></div>'+
   '<div class="field"><label>Etapa</label><select id="l-etapa">'+ETAPAS.map(function(e){return '<option'+(l.etapa===e?' selected':'')+'>'+e+'</option>';}).join("")+'</select></div>'+
   '<div class="field" id="l-motivo-perda-wrap" style="'+(l.etapa==="Perdido"?"":"display:none;")+'"><label>Motivo da perda</label><input id="l-motivo-perda" value="'+escapeHtml(l.motivo_perda||"")+'"></div>'+
   '<div class="field"><label>Observações</label><textarea id="l-obs">'+escapeHtml(l.observacoes||"")+'</textarea></div>';
@@ -2052,6 +2075,7 @@ function openLeadModal(existing, onSaved){
       valor_estimado: parseMoneyBR(document.getElementById("l-valor").value),
       quantidade_vidas: parseInt(document.getElementById("l-vidas").value,10)||null,
       operadora: operadoraFinal,
+      categoria_plano: document.getElementById("l-categoria-plano").value.trim(),
       origem: document.getElementById("l-origem").value.trim(),
       etapa: novaEtapa,
       motivo_perda: novaEtapa==="Perdido" ? (motivoEl? motivoEl.value.trim() : "") : null,
@@ -2219,7 +2243,7 @@ function openPreCadastroModal(lead){
   var draft = imp.pre_cadastro || null;
   var seed = (draft && draft.data) || {produto: lead.produto, titular_nome: lead.nome, razao_social: lead.empresa, vendedor: lead.vendedor, valor_contrato_total: lead.valor_estimado, plano_nome: (lead.operadora||""), status:"Ativo", data_inclusao: todayISO()};
   var seedDeps = (draft && draft.deps) || [];
-  openModal("Pré-cadastro (documentos) — "+(lead.nome||lead.empresa||"—"), clienteFormHtml(seed, seedDeps), function(closeFn){
+  openModal("Pré-cadastro (documentos) — "+(lead.nome||lead.empresa||"—"), clienteFormHtml(seed, seedDeps, {preCadastro:true}), function(closeFn){
     var parsed = readClienteForm();
     var patch = {pre_cadastro: parsed};
     var imp2 = implantacaoDoLead(lead.id);
