@@ -100,6 +100,9 @@ create table if not exists leads (
   observacoes text,
   criado_por text,
   criado_em timestamptz default now()
+  -- nota: quantidade_vidas, operadora, data_ganho, motivo_perda, etapa_atualizada_em
+  -- e categoria_plano (2026-10-07) foram adicionadas depois via ALTER TABLE direto no
+  -- Supabase (migrações pontuais, não refletidas neste arquivo de referência).
 );
 
 -- ========== PÓS-VENDA (interações) ==========
