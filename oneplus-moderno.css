@@ -520,6 +520,45 @@ fieldset legend { padding: 0 6px; font-size: 11px; font-weight: 700; letter-spac
 .op-guia-abrir { border: 1px solid var(--line); background: var(--surface); color: var(--text-soft); font: 600 12.5px var(--font-sans); height: 30px; padding: 0 12px; border-radius: 999px; cursor: pointer; margin-top: 10px; }
 .op-guia-abrir:hover { color: var(--text); border-color: var(--line-strong); }
 
+/* =====================================================================
+   FUNIL: idades das vidas (chips), contato e documentos do negócio
+   ===================================================================== */
+.op-idades-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); }
+.op-idades-box:focus-within { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(47,111,176,0.22); }
+.op-idades-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.op-idades-chips:empty { display: none; }
+.op-idade-chip { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px 0 12px; border-radius: var(--radius-pill);
+  background: var(--accent-blue-bg); color: var(--tag-text); font-size: 13px; font-weight: 700; animation: op-passo var(--dur-base) var(--ease-passo) both; }
+.op-kv-idades .op-idade-chip { padding: 0 10px; height: 24px; font-size: 12px; }
+.op-idade-x { width: 20px; height: 20px; border: 0; border-radius: 50%; background: transparent; color: var(--tag-text); font-size: 15px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.op-idade-x:hover { background: var(--surface); }
+.op-idades-add { display: flex; gap: 8px; }
+.op-idades-add input { flex: 1; height: 34px; border: 0; box-shadow: none; padding: 0 4px; background: transparent; }
+.op-idades-add input:focus { box-shadow: none; }
+.op-idades-resumo { font-size: 12px; display: block; margin-top: 2px; }
+.op-kv-idades > span:last-child { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; }
+.op-card-idades { font-size: 12px; margin-top: 2px; }
+
+.op-contato-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.op-contato-acoes .btn { text-decoration: none; }
+
+.op-upload { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1.5px dashed var(--line-strong); border-radius: var(--radius-lg);
+  background: var(--surface-2); cursor: pointer; transition: border-color var(--dur-rapido) ease, background var(--dur-rapido) ease; }
+.op-upload:hover, .op-upload.arrastando { border-color: var(--navy); background: var(--accent-blue-bg); }
+.op-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.op-upload > span { display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; color: var(--navy); }
+.op-upload .muted { font-size: 12px; font-weight: 500; }
+.op-anexos { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.op-anexo { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.op-anexo-ic { width: 38px; height: 38px; flex: none; border-radius: 10px; background: var(--navy); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .04em; display: flex; align-items: center; justify-content: center; }
+.op-anexo-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.op-anexo-info .linklike { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.op-anexo-info .meta { font-size: 12px; color: var(--text-soft); }
+
+/* Etapas no painel do negócio: quebram em linhas sem espremer o texto */
+.side-panel .stage-stepper { flex-wrap: wrap; }
+.side-panel .stage-step { flex: 1 1 auto; white-space: nowrap; padding: 0 12px; min-height: 32px; cursor: pointer; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .op-pulso path { stroke-dashoffset: 0 !important; }

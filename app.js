@@ -47,7 +47,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [],
+    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [], lead_anexos: [],
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -415,6 +415,8 @@ async function loadAll(){
     state.carencia_modelos = results[14].data || [];
     state.lead_notas = results[15].data || [];
     state.comissoes_recebidas = results[16].data || [];
+    var anx = await sb.from("lead_anexos").select("*").order("criado_em",{ascending:false});
+    state.lead_anexos = anx.error ? [] : (anx.data || []);
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
   render();
@@ -436,7 +438,8 @@ async function reload(table){
         boletos_clientes: function(){ return sb.from("boletos_clientes").select("*"); },
         carencia_modelos: function(){ return sb.from("carencia_modelos").select("*").order("nome"); },
         lead_notas: function(){ return sb.from("lead_notas").select("*").order("criado_em",{ascending:false}); },
-        comissoes_recebidas: function(){ return sb.from("comissoes_recebidas").select("*").order("data_recebimento",{ascending:false}); }
+        comissoes_recebidas: function(){ return sb.from("comissoes_recebidas").select("*").order("data_recebimento",{ascending:false}); },
+        lead_anexos: function(){ return sb.from("lead_anexos").select("*").order("criado_em",{ascending:false}); }
   };
   var r = await map[table]();
   if(r.error){ console.error(r.error); toast("Erro ao atualizar "+table); return; }
@@ -551,7 +554,8 @@ var ICONS = {
 };
 var NAV_GRUPOS = [
   {nome:null, itens:["painel"]},
-  {nome:"Comercial", itens:["clientes","funil"]},
+  {nome:null, itens:["clientes"]},
+  {nome:null, itens:["funil"]},
   {nome:null, itens:["implantacao"]},
   {nome:"Concierge", itens:["tarefas","agenda","posvenda"]},
   {nome:"Gestão", itens:["financeiro","parametros"]}
@@ -2000,6 +2004,8 @@ function viewFunilKanban(byEtapa, agoraISO){
             (parado>LIMITE_DIAS_PARADO? '<span class="badge-stale">🔥 parado '+parado+'d</span>' : '')+
           '</div>'+
           '<div style="margin-top:4px;font-weight:600;">'+fmtMoney(l.valor_estimado)+'</div>'+
+          (normalizarIdades(l.idades).length? '<div class="muted op-card-idades">'+normalizarIdades(l.idades).length+' vida(s) · '+normalizarIdades(l.idades).join(", ")+' anos</div>' : '')+
+          (anexosDoLead(l.id).length? '<div class="muted op-card-idades">'+anexosDoLead(l.id).length+' documento(s)</div>' : '')+
           kanbanCardAtividadesHtml(l, agoraISO)+
           '<select class="lead-etapa kanban-card-noopen" data-lead="'+l.id+'" style="margin-top:8px;">'+ETAPAS.map(function(e2){return '<option'+(l.etapa===e2?' selected':'')+'>'+e2+'</option>';}).join("")+'</select>'+
           '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
@@ -2059,14 +2065,139 @@ function openLeadTarefaModal(lead, onSaved){
     closeFn();
   });
 }
+
+/* ===== Idades das vidas (cotação) — campo de "chips", estilo Pipedrive ===== */
+function normalizarIdades(v){
+  if(!v) return [];
+  if(typeof v==="string"){ try{ v = JSON.parse(v); }catch(e){ v = v.split(/[,;\s]+/); } }
+  if(!Array.isArray(v)) return [];
+  return v.map(function(x){ return parseInt(x,10); }).filter(function(n){ return !isNaN(n) && n>=0 && n<=120; });
+}
+function faixaDaIdade(idade){
+  for(var i=0;i<ANS_BANDS.length;i++){ if(idade<=ANS_BANDS[i].max) return ANS_BANDS[i].label; }
+  return null;
+}
+function resumoFaixas(idades){
+  var cont = {};
+  idades.forEach(function(i){ var f = faixaDaIdade(i)||"—"; cont[f]=(cont[f]||0)+1; });
+  return ANS_BANDS.map(function(b){ return cont[b.label]? b.label+" ("+cont[b.label]+")" : null; }).filter(Boolean).join(" · ");
+}
+function idadesChipsHtml(idades, removivel){
+  return idades.map(function(idade, i){
+    return '<span class="op-idade-chip" title="Faixa ANS: '+escapeHtml(faixaDaIdade(idade)||"—")+'">'+idade+' anos'+
+      (removivel? '<button type="button" class="op-idade-x" data-rm-idade="'+i+'" aria-label="Remover idade">&times;</button>' : '')+'</span>';
+  }).join("");
+}
+function idadesFieldHtml(valor){
+  var idades = normalizarIdades(valor);
+  return '<div class="field op-idades-field"><label>Idades das vidas</label>'+
+    '<div class="op-idades-box" id="l-idades-box">'+
+      '<div class="op-idades-chips" id="l-idades-chips">'+idadesChipsHtml(idades,true)+'</div>'+
+      '<div class="op-idades-add"><input id="l-idade-input" type="text" inputmode="numeric" placeholder="Idade (ex: 34) ou várias: 34, 32, 8">'+
+      '<button type="button" class="btn btn-sm" id="l-idade-add">+ adicionar</button></div>'+
+    '</div>'+
+    '<span class="muted op-idades-resumo" id="l-idades-resumo">'+(idades.length? idades.length+' vida(s) · '+resumoFaixas(idades) : 'Adicione uma idade por vida desta cotação — 3, 4, 20 vidas, o que for.')+'</span>'+
+    '<input type="hidden" id="l-idades-json" value="'+escapeHtml(JSON.stringify(idades))+'">'+
+  '</div>';
+}
+function wireIdadesField(){
+  var box = document.getElementById("l-idades-box"); if(!box) return;
+  var hidden = document.getElementById("l-idades-json");
+  var input = document.getElementById("l-idade-input");
+  var chips = document.getElementById("l-idades-chips");
+  var resumo = document.getElementById("l-idades-resumo");
+  var vidas = document.getElementById("l-vidas");
+  var hint = document.getElementById("l-vidas-hint");
+  var idades = normalizarIdades(hidden.value);
+  function pintar(){
+    hidden.value = JSON.stringify(idades);
+    chips.innerHTML = idadesChipsHtml(idades, true);
+    resumo.textContent = idades.length? idades.length+" vida(s) · "+resumoFaixas(idades) : "Adicione uma idade por vida desta cotação — 3, 4, 20 vidas, o que for.";
+    if(vidas && idades.length){ vidas.value = idades.length; if(hint) hint.textContent = "calculado pelas idades"; }
+    else if(hint){ hint.textContent = ""; }
+  }
+  function adicionar(){
+    var novas = normalizarIdades(input.value);
+    if(!novas.length){ input.focus(); return; }
+    idades = idades.concat(novas); input.value = ""; pintar(); input.focus();
+  }
+  document.getElementById("l-idade-add").addEventListener("click", adicionar);
+  input.addEventListener("keydown", function(e){
+    if(e.key==="Enter"||e.key===","){ e.preventDefault(); adicionar(); }
+    else if(e.key==="Backspace" && !input.value && idades.length){ idades.pop(); pintar(); }
+  });
+  chips.addEventListener("click", function(e){
+    var b = e.target.closest("[data-rm-idade]"); if(!b) return;
+    idades.splice(parseInt(b.getAttribute("data-rm-idade"),10),1); pintar();
+  });
+  pintar();
+}
+/* Salva o negócio; se o banco ainda não tiver as colunas novas, salva o resto e avisa. */
+var LEAD_CAMPOS_NOVOS = ["email","telefone","idades"];
+async function salvarLead(existing, data){
+  async function tentar(d){
+    if(existing){ return await sb.from("leads").update(d).eq("id", existing.id).select(); }
+    d.criado_por = currentUser();
+    return await sb.from("leads").insert(d).select();
+  }
+  var r = await tentar(Object.assign({}, data));
+  if(r.error && /column|schema cache/i.test(r.error.message||"") && LEAD_CAMPOS_NOVOS.some(function(c){ return (r.error.message||"").indexOf(c)>=0; })){
+    var semNovos = Object.assign({}, data); LEAD_CAMPOS_NOVOS.forEach(function(c){ delete semNovos[c]; });
+    r = await tentar(semNovos);
+    if(!r.error) toast("Salvo, mas e-mail, telefone e idades precisam da atualização do banco (SQL).");
+  } else if(!r.error){ toast(existing? "Atualizado." : "Salvo."); }
+  if(r.error){ console.error(r.error); toast("Erro ao salvar: "+r.error.message); return null; }
+  await reload("leads");
+  return existing ? existing.id : (r.data && r.data[0] && r.data[0].id);
+}
+function soDigitos(s){ return String(s||"").replace(/\D/g,""); }
+function linkWhatsApp(tel){
+  var d = soDigitos(tel); if(!d) return null;
+  if(d.length<=11) d = "55"+d;
+  return "https://wa.me/"+d;
+}
+/* ===== Documentos do negócio (propostas, cotações) — bucket "leads" ===== */
+function anexosDoLead(leadId){ return (state.lead_anexos||[]).filter(function(a){ return a.lead_id===leadId; }); }
+function fmtTamanho(b){ if(!b) return ""; if(b<1024) return b+" B"; if(b<1048576) return Math.round(b/1024)+" KB"; return (b/1048576).toFixed(1).replace(".",",")+" MB"; }
+async function enviarAnexosLead(leadId, files){
+  if(!files || !files.length) return;
+  var ok = 0;
+  for(var i=0;i<files.length;i++){
+    var f = files[i];
+    if(f.size > 25*1024*1024){ toast("“"+f.name+"” passa de 25 MB."); continue; }
+    var seguro = f.name.normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9._-]+/g,"-");
+    var path = leadId+"/"+Date.now()+"-"+seguro;
+    toast("Enviando "+f.name+"…");
+    var up = await sb.storage.from("leads").upload(path, f, {upsert:false, contentType: f.type||undefined});
+    if(up.error){ console.error(up.error); toast("Erro ao enviar arquivo: "+up.error.message); continue; }
+    var ins = await sb.from("lead_anexos").insert({lead_id: leadId, nome_arquivo: f.name, path: path, tamanho: f.size, tipo: f.type||null, criado_por: currentUser()});
+    if(ins.error){ console.error(ins.error); toast("Arquivo enviado, mas não registrado: "+ins.error.message); continue; }
+    ok++;
+  }
+  if(ok){ toast(ok===1? "Documento anexado." : ok+" documentos anexados."); await reload("lead_anexos"); }
+}
+async function abrirAnexoLead(path){
+  var w = window.open("", "_blank");
+  var r = await sb.storage.from("leads").createSignedUrl(path, 3600);
+  if(r.error || !r.data){ if(w) w.close(); toast("Erro ao gerar link do arquivo."); return; }
+  if(w) w.location = r.data.signedUrl; else window.location.href = r.data.signedUrl;
+}
+async function removerAnexoLead(anexo){
+  if(!confirm("Remover o documento “"+anexo.nome_arquivo+"”?")) return false;
+  await sb.storage.from("leads").remove([anexo.path]);
+  return await dbDelete("lead_anexos", anexo.id);
+}
+
 function leadFormHtml(l){
   l=l||{etapa:"Qualificação",produto:"Saúde",vendedor:"Henrique"};
   var operadoraAtual = l.operadora && OPERADORAS.indexOf(l.operadora)===-1 ? "Outros" : (l.operadora||"");
   var operadoraOutrosValor = (l.operadora && OPERADORAS.indexOf(l.operadora)===-1) ? l.operadora : "";
   return '<div class="field row2"><div class="field"><label>Nome do contato</label><input id="l-nome" value="'+escapeHtml(l.nome||"")+'"></div><div class="field"><label>Empresa</label><input id="l-empresa" value="'+escapeHtml(l.empresa||"")+'"></div></div>'+
+  '<div class="field row2"><div class="field"><label>Telefone / WhatsApp</label><input id="l-telefone" type="tel" inputmode="tel" value="'+escapeHtml(l.telefone||"")+'" placeholder="(11) 99999-9999"></div><div class="field"><label>E-mail</label><input id="l-email" type="email" value="'+escapeHtml(l.email||"")+'" placeholder="nome@empresa.com.br"></div></div>'+
+  idadesFieldHtml(l.idades)+
   '<div class="field row2"><div class="field"><label>Produto</label><select id="l-produto">'+PRODUTOS.map(function(p){return '<option'+(l.produto===p?' selected':'')+'>'+p+'</option>';}).join("")+'</select></div><div class="field"><label>Vendedor(a)</label><select id="l-vendedor">'+VENDEDORES.map(function(v){return '<option'+(l.vendedor===v?' selected':'')+'>'+v+'</option>';}).join("")+'</select></div></div>'+
   '<div class="field row2">'+moneyFieldHtml("l-valor", l.valor_estimado, "Valor do negócio (R$)")+'<div class="field"><label>Origem</label><input id="l-origem" value="'+escapeHtml(l.origem||"")+'"></div></div>'+
-  '<div class="field row2"><div class="field"><label>Quantidade de vidas</label><input type="number" step="1" min="0" id="l-vidas" value="'+(l.quantidade_vidas||"")+'" placeholder="ex: 4"></div>'+
+  '<div class="field row2"><div class="field"><label>Quantidade de vidas</label><input type="number" step="1" min="0" id="l-vidas" value="'+(l.quantidade_vidas||"")+'" placeholder="ex: 4"><span class="muted" id="l-vidas-hint" style="font-size:12px;"></span></div>'+
     '<div class="field"><label>Operadora / plano</label><select id="l-operadora">'+
       '<option value="">—</option>'+
       OPERADORAS.map(function(o){ return '<option'+(operadoraAtual===o?' selected':'')+'>'+o+'</option>'; }).join("")+
@@ -2078,6 +2209,7 @@ function leadFormHtml(l){
   '<div class="field"><label>Observações</label><textarea id="l-obs">'+escapeHtml(l.observacoes||"")+'</textarea></div>';
 }
 function wireLeadFormExtra(){
+  wireIdadesField();
   var sel = document.getElementById("l-operadora");
   var wrap = document.getElementById("l-operadora-outros-wrap");
   if(sel && wrap){
@@ -2103,6 +2235,9 @@ function openLeadModal(existing, onSaved){
       vendedor: document.getElementById("l-vendedor").value,
       valor_estimado: parseMoneyBR(document.getElementById("l-valor").value),
       quantidade_vidas: parseInt(document.getElementById("l-vidas").value,10)||null,
+      telefone: document.getElementById("l-telefone").value.trim() || null,
+      email: document.getElementById("l-email").value.trim() || null,
+      idades: normalizarIdades(document.getElementById("l-idades-json").value),
       operadora: operadoraFinal,
       categoria_plano: document.getElementById("l-categoria-plano").value.trim(),
       origem: document.getElementById("l-origem").value.trim(),
@@ -2113,9 +2248,9 @@ function openLeadModal(existing, onSaved){
     if(!data.nome && !data.empresa){ toast("Informe nome ou empresa."); return; }
     if(novaEtapa==="Ganho" && !(existing && existing.data_ganho)){ data.data_ganho = todayISO(); }
     if(!existing || existing.etapa!==novaEtapa){ data.etapa_atualizada_em = new Date().toISOString(); }
-    var leadId = existing ? existing.id : null;
-    if(existing){ await dbUpdate("leads", existing.id, data); }
-    else { var created = await dbInsert("leads", data); leadId = created && created.id; }
+    if(data.idades.length) data.quantidade_vidas = data.idades.length;
+    var leadId = await salvarLead(existing, data);
+    if(!leadId) return;
     if(leadId && novaEtapa==="Ganho"){ await ensureImplantacao(leadId); }
     closeFn();
     if(onSaved) onSaved(leadId);
@@ -2123,6 +2258,58 @@ function openLeadModal(existing, onSaved){
   wireLeadFormExtra();
 }
 /* ================= PAINEL DE DETALHES DO NEGÓCIO (funil) ================= */
+
+function contatoLeadHtml(lead){
+  var tel = lead.telefone, mail = lead.email, wa = linkWhatsApp(tel);
+  return '<div class="side-panel-section">'+
+    '<h4>Contato</h4>'+
+    '<div class="kv-list">'+
+      '<div class="kv-row"><span class="k">Telefone</span><span>'+(tel? escapeHtml(tel) : '<span class="muted">—</span>')+'</span></div>'+
+      '<div class="kv-row"><span class="k">E-mail</span><span>'+(mail? '<a class="linklike" href="mailto:'+escapeHtml(mail)+'">'+escapeHtml(mail)+'</a>' : '<span class="muted">—</span>')+'</span></div>'+
+    '</div>'+
+    '<div class="op-contato-acoes">'+
+      (wa? '<a class="btn btn-sm btn-concierge" href="'+wa+'" target="_blank" rel="noopener">WhatsApp</a>' : '')+
+      (tel? '<a class="btn btn-sm" href="tel:'+soDigitos(tel)+'">Ligar</a>' : '')+
+      (mail? '<a class="btn btn-sm" href="mailto:'+escapeHtml(mail)+'">Enviar e-mail</a>' : '')+
+      (!tel && !mail? '<button class="linklike" id="panel-add-contato">+ adicionar telefone e e-mail</button>' : '')+
+    '</div>'+
+  '</div>';
+}
+function documentosLeadHtml(leadId){
+  var anexos = anexosDoLead(leadId);
+  return '<div class="side-panel-section">'+
+    '<h4>Documentos</h4>'+
+    '<label class="op-upload" id="panel-upload-label"><input type="file" id="panel-upload" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt">'+
+      '<span><b>+ anexar documento</b><span class="muted">Proposta, cotação, tabela — PDF, imagem, Word ou Excel (até 25 MB). Pode arrastar o arquivo aqui.</span></span></label>'+
+    (anexos.length? '<div class="op-anexos">'+anexos.map(function(a){
+      return '<div class="op-anexo">'+
+        '<span class="op-anexo-ic">'+escapeHtml(((a.nome_arquivo||"").split(".").pop()||"doc").slice(0,4).toUpperCase())+'</span>'+
+        '<span class="op-anexo-info"><button class="linklike" data-abrir-anexo="'+escapeHtml(a.path)+'">'+escapeHtml(a.nome_arquivo)+'</button>'+
+        '<span class="meta">'+fmtTamanho(a.tamanho)+' · '+fmtDateTime(a.criado_em)+(a.criado_por? ' · '+escapeHtml(String(a.criado_por).split("@")[0]) : '')+'</span></span>'+
+        '<button class="iconbtn" data-rm-anexo="'+a.id+'" title="Remover">&times;</button>'+
+      '</div>';
+    }).join("")+'</div>' : '<div class="empty" style="padding:14px 6px;">Nenhum documento ainda.</div>')+
+  '</div>';
+}
+function wireDocumentosLead(root, leadId){
+  var inp = root.querySelector("#panel-upload");
+  var label = root.querySelector("#panel-upload-label");
+  if(inp){ inp.addEventListener("change", function(){ var fs = Array.prototype.slice.call(inp.files); enviarAnexosLead(leadId, fs).then(function(){ openLeadDetailPanel(leadId); }); }); }
+  if(label){
+    label.addEventListener("dragover", function(e){ e.preventDefault(); label.classList.add("arrastando"); });
+    label.addEventListener("dragleave", function(){ label.classList.remove("arrastando"); });
+    label.addEventListener("drop", function(e){ e.preventDefault(); label.classList.remove("arrastando");
+      var fs = Array.prototype.slice.call(e.dataTransfer.files||[]); enviarAnexosLead(leadId, fs).then(function(){ openLeadDetailPanel(leadId); }); });
+  }
+  Array.prototype.forEach.call(root.querySelectorAll("[data-abrir-anexo]"), function(b){ b.onclick = function(){ abrirAnexoLead(b.getAttribute("data-abrir-anexo")); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-rm-anexo]"), function(b){
+    b.onclick = function(){
+      var a = (state.lead_anexos||[]).filter(function(x){ return x.id===b.getAttribute("data-rm-anexo"); })[0];
+      if(a) removerAnexoLead(a).then(function(ok){ if(ok) openLeadDetailPanel(leadId); });
+    };
+  });
+}
+
 function closeLeadDetailPanel(){
   var root = document.getElementById("panel-root");
   if(root) root.innerHTML = "";
@@ -2150,12 +2337,14 @@ function openLeadDetailPanel(leadId){
       '<div class="stage-stepper" style="margin-top:12px;">'+stepperHtml+'</div>'+
     '</div>'+
     '<div class="side-panel-body">'+
+      contatoLeadHtml(lead)+
       '<div class="side-panel-section">'+
         '<h4>Negócio</h4>'+
         '<div class="kv-list">'+
           '<div class="kv-row"><span class="k">Valor</span><span><b>'+fmtMoney(lead.valor_estimado)+'</b></span></div>'+
           (lead.operadora? '<div class="kv-row"><span class="k">Operadora</span><span>'+escapeHtml(lead.operadora)+'</span></div>' : '')+
           (lead.quantidade_vidas? '<div class="kv-row"><span class="k">Vidas</span><span>'+lead.quantidade_vidas+'</span></div>' : '')+
+          (normalizarIdades(lead.idades).length? '<div class="kv-row op-kv-idades"><span class="k">Idades</span><span><span class="op-idades-chips">'+idadesChipsHtml(normalizarIdades(lead.idades),false)+'</span><span class="muted op-idades-resumo">'+resumoFaixas(normalizarIdades(lead.idades))+'</span></span></div>' : '')+
           (lead.origem? '<div class="kv-row"><span class="k">Origem</span><span>'+escapeHtml(lead.origem)+'</span></div>' : '')+
           '<div class="kv-row"><span class="k">Parado há</span><span>'+(parado>0? parado+" dia(s)" : "atualizado hoje")+'</span></div>'+
           (lead.etapa==="Perdido" && lead.motivo_perda? '<div class="kv-row"><span class="k">Motivo da perda</span><span>'+escapeHtml(lead.motivo_perda)+'</span></div>' : '')+
@@ -2163,6 +2352,7 @@ function openLeadDetailPanel(leadId){
         '</div>'+
         '<button class="linklike" id="panel-edit-lead" style="margin-top:4px;">editar negócio</button>'+
       '</div>'+
+      documentosLeadHtml(leadId)+
       '<div class="side-panel-section">'+
         '<h4>Atividades</h4>'+
         '<button class="linklike" id="panel-add-atividade">+ nova atividade</button>'+
@@ -2191,6 +2381,9 @@ function openLeadDetailPanel(leadId){
   document.getElementById("panel-backdrop").addEventListener("click", function(e){ if(e.target.id==="panel-backdrop") closeLeadDetailPanel(); });
   document.getElementById("panel-edit-lead").onclick = function(){ openLeadModal(lead, function(id){ openLeadDetailPanel(id||leadId); }); };
   document.getElementById("panel-add-atividade").onclick = function(){ openLeadTarefaModal(lead, function(){ openLeadDetailPanel(leadId); }); };
+  var addContato = document.getElementById("panel-add-contato");
+  if(addContato) addContato.onclick = function(){ openLeadModal(lead, function(id){ openLeadDetailPanel(id||leadId); }); };
+  wireDocumentosLead(root, leadId);
   document.getElementById("panel-add-nota").onclick = function(){
     var txt = document.getElementById("panel-nota-texto").value.trim();
     if(!txt){ toast("Escreva algo antes de salvar a nota."); return; }
