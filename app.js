@@ -533,6 +533,7 @@ var NAV = [
   {id:"painel", label:"Painel", icon:"grid"},
   {id:"clientes", label:"Clientes", icon:"users"},
   {id:"funil", label:"Funil Comercial", icon:"filter"},
+  {id:"empresas", label:"Empresas", icon:"building"},
   {id:"implantacao", label:"Implantação", icon:"flag"},
   {id:"tarefas", label:"Tarefas", icon:"check"},
   {id:"agenda", label:"Agenda", icon:"calendar"},
@@ -550,12 +551,13 @@ var ICONS = {
   message:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H8l-4 4z"/></svg>',
   sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h9M17 6h3M4 12h3M9 12h11M4 18h13M20 18h0"/><circle cx="14" cy="6" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
   flag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4"/><path d="M5 4h13l-3 4.5L18 13H5"/></svg>',
+  building:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16"/><path d="M15 9h4a1 1 0 0 1 1 1v11"/><path d="M3 21h18M8 8h3M8 12h3M8 16h3"/></svg>',
   receipt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>'
 };
 var NAV_GRUPOS = [
   {nome:null, itens:["painel"]},
   {nome:null, itens:["clientes"]},
-  {nome:null, itens:["funil"]},
+  {nome:null, itens:["funil","empresas"]},
   {nome:null, itens:["implantacao"]},
   {nome:"Concierge", itens:["tarefas","agenda","posvenda"]},
   {nome:"Gestão", itens:["financeiro","parametros"]}
@@ -598,6 +600,7 @@ function render(){
   if(state.tab==="painel") main.innerHTML = viewPainel();
   else if(state.tab==="clientes") main.innerHTML = viewClientes();
   else if(state.tab==="funil") main.innerHTML = viewFunil();
+  else if(state.tab==="empresas") main.innerHTML = viewEmpresas();
   else if(state.tab==="implantacao") main.innerHTML = viewImplantacao();
   else if(state.tab==="tarefas") main.innerHTML = viewTarefas();
   else if(state.tab==="agenda") main.innerHTML = viewAgenda();
@@ -2221,8 +2224,8 @@ function wireLeadFormExtra(){
     etapaSel.addEventListener("change", function(){ motivoWrap.style.display = etapaSel.value==="Perdido" ? "" : "none"; });
   }
 }
-function openLeadModal(existing, onSaved){
-  openModal(existing?"Editar oportunidade":"Nova oportunidade", leadFormHtml(existing), async function(closeFn){
+function openLeadModal(existing, onSaved, seed){
+  openModal(existing?"Editar oportunidade":"Nova oportunidade", leadFormHtml(existing||seed), async function(closeFn){
     var operadoraSel = document.getElementById("l-operadora").value;
     var operadoraOutros = document.getElementById("l-operadora-outros");
     var operadoraFinal = operadoraSel==="Outros" ? (operadoraOutros? operadoraOutros.value.trim() : "") : operadoraSel;
@@ -2246,6 +2249,7 @@ function openLeadModal(existing, onSaved){
       observacoes: document.getElementById("l-obs").value.trim()
     };
     if(!data.nome && !data.empresa){ toast("Informe nome ou empresa."); return; }
+    if(!existing && seed && seed.empresa_id) data.empresa_id = seed.empresa_id;
     if(novaEtapa==="Ganho" && !(existing && existing.data_ganho)){ data.data_ganho = todayISO(); }
     if(!existing || existing.etapa!==novaEtapa){ data.etapa_atualizada_em = new Date().toISOString(); }
     if(data.idades.length) data.quantidade_vidas = data.idades.length;
@@ -2399,6 +2403,442 @@ function openLeadDetailPanel(leadId){
       requestEtapaChange(leadId, etapa, function(){ openLeadDetailPanel(leadId); }, function(){ openLeadDetailPanel(leadId); });
     };
   });
+}
+
+/* ================= EMPRESAS (base migrada do Agendor + novas) =================
+   Carrega sob demanda (só ao abrir a aba), porque são milhares de registros. */
+var EMP_COLS_EMPRESA = "id,agendor_id,nome,razao_social,cnpj,email,telefone,website,instagram,linkedin,responsavel,categoria,origem,setor,ranking,cep,logradouro,numero,complemento,bairro,cidade,uf,plano_atual,valor_plano_atual,novo_plano,valor_novo_plano,socio_1,socio_2,cnpj_adicional,nome_contato,porte,representante_legal,numero_vidas,beneficiarios,vigencia,coparticipacao,produtos,ultima_atividade,ultima_atividade_em,proxima_atividade,proxima_atividade_em,observacoes,agendor_criado_em,criado_em";
+var EMP_COLS_CONTATO = "id,agendor_id,empresa_id,nome,cargo,cpf,email,telefone,aniversario,responsavel,categoria,origem,produtos,observacoes,agendor_criado_em,criado_em";
+var EMP_COLS_NEGOCIO = "id,agendor_id,empresa_id,contato_id,empresa_nome,contato_nome,titulo,valor,status,etapa,funil,responsavel,data_inicio,data_fim,motivo_perda,n_vidas,plano_contratado,data_vigencia,informacoes,produtos,agendor_criado_em";
+var EMP_POR_PAGINA = 50;
+var emp = {carregado:false, carregando:false, erro:null, empresas:[], contatos:[], negocios:[], aba:"empresas",
+  f:{busca:"", responsavel:"", categoria:"", porte:"", status:""}, pagina:0};
+
+async function empBuscarTudo(tabela, colunas, ordem){
+  var out = [], de = 0, passo = 1000;
+  while(true){
+    var r = await sb.from(tabela).select(colunas).order(ordem).range(de, de+passo-1);
+    if(r.error) throw r.error;
+    out = out.concat(r.data||[]);
+    if(!r.data || r.data.length < passo) break;
+    de += passo;
+  }
+  return out;
+}
+async function carregarEmpresas(forcar){
+  if(emp.carregando || (emp.carregado && !forcar)) return;
+  emp.carregando = true; emp.erro = null;
+  if(state.tab==="empresas") render();
+  try{
+    var res = await Promise.all([
+      empBuscarTudo("empresas", EMP_COLS_EMPRESA, "nome"),
+      empBuscarTudo("empresa_contatos", EMP_COLS_CONTATO, "nome"),
+      empBuscarTudo("empresa_negocios_agendor", EMP_COLS_NEGOCIO, "agendor_criado_em")
+    ]);
+    emp.empresas = res[0]; emp.contatos = res[1]; emp.negocios = res[2].reverse();
+    emp.carregado = true;
+  }catch(e){ console.error(e); emp.erro = (e && e.message) || "erro"; }
+  emp.carregando = false;
+  if(state.tab==="empresas") render();
+}
+function empSemAcento(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,""); }
+function empPorId(id){ for(var i=0;i<emp.empresas.length;i++){ if(emp.empresas[i].id===id) return emp.empresas[i]; } return null; }
+function empContatosDa(id){ return emp.contatos.filter(function(c){ return c.empresa_id===id; }); }
+function empNegociosAgendorDa(id){ return emp.negocios.filter(function(n){ return n.empresa_id===id; }); }
+function empLeadsDa(id){ return state.leads.filter(function(l){ return l.empresa_id===id; }); }
+function empFmtCNPJ(v){ var d = soDigitos(v); return d.length===14 ? maskCNPJ(d) : (v||""); }
+function empOpcoes(lista, campo){
+  var vistos = {}; lista.forEach(function(x){ var v = x[campo]; if(v) vistos[v] = (vistos[v]||0)+1; });
+  return Object.keys(vistos).sort();
+}
+function empSelect(id, rotulo, valores, atual, todos){
+  return '<div class="field"><label>'+rotulo+'</label><select id="'+id+'"><option value="">'+(todos||"Todos")+'</option>'+
+    valores.map(function(v){ return '<option'+(atual===v?' selected':'')+'>'+escapeHtml(v)+'</option>'; }).join("")+'</select></div>';
+}
+function empCombina(e, q, qd){
+  if(empSemAcento(e.nome).indexOf(q)>=0) return true;
+  if(e.razao_social && empSemAcento(e.razao_social).indexOf(q)>=0) return true;
+  if(e.email && e.email.toLowerCase().indexOf(q)>=0) return true;
+  if(e.cidade && empSemAcento(e.cidade).indexOf(q)>=0) return true;
+  if(e.nome_contato && empSemAcento(e.nome_contato).indexOf(q)>=0) return true;
+  if(qd && qd.length>=3 && (soDigitos(e.cnpj).indexOf(qd)>=0 || soDigitos(e.telefone).indexOf(qd)>=0)) return true;
+  return false;
+}
+function empresasFiltradas(){
+  var f = emp.f, q = empSemAcento(f.busca.trim()), qd = soDigitos(f.busca);
+  return emp.empresas.filter(function(e){
+    if(f.responsavel && e.responsavel!==f.responsavel) return false;
+    if(f.categoria && e.categoria!==f.categoria) return false;
+    if(f.porte && e.porte!==f.porte) return false;
+    if(q && !empCombina(e, q, qd)) return false;
+    return true;
+  });
+}
+function contatosFiltrados(){
+  var f = emp.f, q = empSemAcento(f.busca.trim()), qd = soDigitos(f.busca);
+  return emp.contatos.filter(function(c){
+    if(f.responsavel && c.responsavel!==f.responsavel) return false;
+    if(q){
+      var e = c.empresa_id ? empPorId(c.empresa_id) : null;
+      var alvo = empSemAcento(c.nome+" "+(c.email||"")+" "+(c.cargo||"")+" "+(e? e.nome : ""));
+      if(alvo.indexOf(q)===-1 && !(qd.length>=3 && soDigitos(c.telefone).indexOf(qd)>=0)) return false;
+    }
+    return true;
+  });
+}
+function negociosAgendorFiltrados(){
+  var f = emp.f, q = empSemAcento(f.busca.trim());
+  return emp.negocios.filter(function(n){
+    if(f.responsavel && n.responsavel!==f.responsavel) return false;
+    if(f.status && n.status!==f.status) return false;
+    if(q && empSemAcento((n.titulo||"")+" "+(n.empresa_nome||"")+" "+(n.contato_nome||"")).indexOf(q)===-1) return false;
+    return true;
+  });
+}
+function empPaginacaoHtml(total){
+  var paginas = Math.max(1, Math.ceil(total/EMP_POR_PAGINA));
+  if(emp.pagina>=paginas) emp.pagina = paginas-1;
+  var ini = total? emp.pagina*EMP_POR_PAGINA+1 : 0, fim = Math.min(total, (emp.pagina+1)*EMP_POR_PAGINA);
+  return '<div class="rowflex emp-paginacao" style="justify-content:space-between;margin-top:12px;">'+
+    '<span class="muted">Mostrando '+ini.toLocaleString("pt-BR")+'–'+fim.toLocaleString("pt-BR")+' de '+total.toLocaleString("pt-BR")+'</span>'+
+    '<span class="rowflex" style="gap:6px;">'+
+      '<button class="btn btn-ghost btn-sm" id="emp-pag-ant"'+(emp.pagina<=0?' disabled':'')+'>‹ Anterior</button>'+
+      '<span class="muted">página '+(emp.pagina+1)+' de '+paginas+'</span>'+
+      '<button class="btn btn-ghost btn-sm" id="emp-pag-prox"'+(emp.pagina>=paginas-1?' disabled':'')+'>Próxima ›</button>'+
+    '</span></div>';
+}
+function empPagina(lista){ return lista.slice(emp.pagina*EMP_POR_PAGINA, (emp.pagina+1)*EMP_POR_PAGINA); }
+
+function viewEmpresas(){
+  if(!emp.carregado){
+    if(!emp.carregando && !emp.erro) setTimeout(function(){ carregarEmpresas(); }, 0);
+    return '<div class="topbar"><div><h1>Empresas</h1><div class="desc">Base de empresas, pessoas e histórico do Agendor</div></div></div>'+
+      '<div class="card"><div class="card-body"><div class="empty">'+(emp.erro? 'Não foi possível carregar as empresas ('+escapeHtml(emp.erro)+'). <button class="linklike" id="emp-recarregar">tentar de novo</button>' : 'Carregando empresas…')+'</div></div></div>';
+  }
+  var noFunil = state.leads.filter(function(l){ return l.empresa_id; }).length;
+  var header = '<div class="topbar"><div><h1>Empresas</h1><div class="desc">'+emp.empresas.length.toLocaleString("pt-BR")+' empresas · '+emp.contatos.length.toLocaleString("pt-BR")+' pessoas · '+emp.negocios.length.toLocaleString("pt-BR")+' negócios do Agendor'+(noFunil? ' · '+noFunil+' já no funil' : '')+'</div></div>'+
+    '<div class="rowflex"><button class="btn btn-ghost" id="emp-exportar">Exportar Excel</button><button class="btn btn-primary" id="emp-nova">+ Nova empresa</button></div></div>';
+  var abas = '<div class="tabs2">'+
+    tabbtn("emp-aba","empresas","Empresas ("+emp.empresas.length.toLocaleString("pt-BR")+")",emp.aba)+
+    tabbtn("emp-aba","pessoas","Pessoas ("+emp.contatos.length.toLocaleString("pt-BR")+")",emp.aba)+
+    tabbtn("emp-aba","negocios","Negócios do Agendor ("+emp.negocios.length.toLocaleString("pt-BR")+")",emp.aba)+
+  '</div>';
+  var fonte = emp.aba==="pessoas" ? emp.contatos : (emp.aba==="negocios" ? emp.negocios : emp.empresas);
+  var placeholder = emp.aba==="pessoas" ? "Nome, e-mail, telefone ou empresa" : (emp.aba==="negocios" ? "Título, empresa ou contato" : "Nome, razão social, CNPJ, telefone, e-mail ou cidade");
+  var filtros = '<div class="funil-filterbar">'+
+    '<div class="field grow"><label>Buscar</label><input id="emp-busca" placeholder="'+placeholder+'" value="'+escapeHtml(emp.f.busca)+'"></div>'+
+    empSelect("emp-f-resp","Responsável", empOpcoes(fonte,"responsavel"), emp.f.responsavel)+
+    (emp.aba==="empresas"? empSelect("emp-f-cat","Categoria", empOpcoes(emp.empresas,"categoria"), emp.f.categoria, "Todas") + empSelect("emp-f-porte","Porte", empOpcoes(emp.empresas,"porte"), emp.f.porte) : '')+
+    (emp.aba==="negocios"? empSelect("emp-f-status","Situação", empOpcoes(emp.negocios,"status"), emp.f.status, "Todas") : '')+
+    ((emp.f.busca||emp.f.responsavel||emp.f.categoria||emp.f.porte||emp.f.status)? '<button class="linklike" id="emp-limpar" style="padding-bottom:9px;">limpar filtros</button>' : '')+
+  '</div>';
+  var corpo = emp.aba==="pessoas" ? viewEmpPessoas() : (emp.aba==="negocios" ? viewEmpNegocios() : viewEmpLista());
+  return header + abas + filtros + corpo;
+}
+function viewEmpLista(){
+  var lista = empresasFiltradas();
+  if(!lista.length) return '<div class="card"><div class="card-body"><div class="empty">Nenhuma empresa encontrada com esses filtros.</div></div></div>';
+  return '<div class="card"><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+    '<th style="min-width:260px;">Empresa</th><th>CNPJ</th><th>Responsável</th><th>Telefone</th><th>Cidade</th><th>Vidas</th><th>Plano atual</th><th></th>'+
+    '</tr></thead><tbody>'+
+    empPagina(lista).map(function(e){
+      var nf = empLeadsDa(e.id).length;
+      return '<tr class="rowlink" data-open-empresa="'+e.id+'" style="cursor:pointer;">'+
+        '<td><b>'+escapeHtml(e.nome)+'</b>'+(e.razao_social && e.razao_social!==e.nome? '<div class="muted" style="font-size:12px;">'+escapeHtml(e.razao_social)+'</div>' : '')+(nf? ' <span class="tag">'+nf+' no funil</span>' : '')+'</td>'+
+        '<td style="white-space:nowrap;">'+escapeHtml(empFmtCNPJ(e.cnpj)||"—")+'</td>'+
+        '<td>'+escapeHtml(e.responsavel||"—")+'</td>'+
+        '<td style="white-space:nowrap;">'+escapeHtml(e.telefone||"—")+'</td>'+
+        '<td>'+escapeHtml(e.cidade? e.cidade+(e.uf? "/"+e.uf : "") : "—")+'</td>'+
+        '<td>'+(e.numero_vidas!=null? e.numero_vidas : "—")+'</td>'+
+        '<td>'+escapeHtml(e.plano_atual||"—")+'</td>'+
+        '<td><button class="linklike" data-emp-criar-negocio="'+e.id+'" style="white-space:nowrap;">+ negócio</button></td>'+
+      '</tr>';
+    }).join("")+
+    '</tbody></table></div>'+empPaginacaoHtml(lista.length)+'</div></div>';
+}
+function viewEmpPessoas(){
+  var lista = contatosFiltrados();
+  if(!lista.length) return '<div class="card"><div class="card-body"><div class="empty">Nenhuma pessoa encontrada com esses filtros.</div></div></div>';
+  return '<div class="card"><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+    '<th style="min-width:180px;">Nome</th><th style="min-width:200px;">Empresa</th><th>Cargo</th><th>Telefone</th><th>E-mail</th><th>Responsável</th><th>Origem</th><th></th>'+
+    '</tr></thead><tbody>'+
+    empPagina(lista).map(function(c){
+      var e = c.empresa_id ? empPorId(c.empresa_id) : null;
+      return '<tr>'+
+        '<td><b>'+escapeHtml(c.nome)+'</b></td>'+
+        '<td>'+(e? '<button class="linklike" style="text-align:left;" data-open-empresa="'+e.id+'">'+escapeHtml(e.nome)+'</button>' : '<span class="muted">—</span>')+'</td>'+
+        '<td>'+escapeHtml(c.cargo||"—")+'</td>'+
+        '<td style="white-space:nowrap;">'+(c.telefone? (linkWhatsApp(c.telefone)? '<a class="linklike" href="'+linkWhatsApp(c.telefone)+'" target="_blank" rel="noopener">'+escapeHtml(c.telefone)+'</a>' : escapeHtml(c.telefone)) : "—")+'</td>'+
+        '<td>'+escapeHtml(c.email||"—")+'</td>'+
+        '<td>'+escapeHtml(c.responsavel||"—")+'</td>'+
+        '<td>'+escapeHtml(c.origem||"—")+'</td>'+
+        '<td><button class="linklike" data-emp-negocio-contato="'+c.id+'" style="white-space:nowrap;">+ negócio</button></td>'+
+      '</tr>';
+    }).join("")+
+    '</tbody></table></div>'+empPaginacaoHtml(lista.length)+'</div></div>';
+}
+function empStatusPill(s){
+  if(s==="Ganho") return '<span class="pill pill-ok">Ganho</span>';
+  if(s==="Perdido") return '<span class="pill pill-bad">Perdido</span>';
+  return '<span class="pill pill-warn">'+escapeHtml(s||"—")+'</span>';
+}
+function viewEmpNegocios(){
+  var lista = negociosAgendorFiltrados();
+  var soma = function(arr){ return arr.reduce(function(s,n){ return s+(Number(n.valor)||0); },0); };
+  var porStatus = function(st){ return lista.filter(function(n){ return n.status===st; }); };
+  var tiles = '<div class="tiles">'+
+    tile("Em andamento (Agendor)", porStatus("Em andamento").length, fmtMoney(soma(porStatus("Em andamento"))))+
+    tile("Ganhos (Agendor)", porStatus("Ganho").length, fmtMoney(soma(porStatus("Ganho"))))+
+    tile("Perdidos (Agendor)", porStatus("Perdido").length, fmtMoney(soma(porStatus("Perdido"))))+
+  '</div>';
+  if(!lista.length) return tiles+'<div class="card"><div class="card-body"><div class="empty">Nenhum negócio encontrado com esses filtros.</div></div></div>';
+  return tiles+'<div class="card"><div class="card-head"><h2>Histórico de negócios do Agendor</h2><div class="meta">somente consulta · para trabalhar um deles, use "levar ao funil"</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+    '<th>Negócio</th><th>Empresa / contato</th><th>Etapa no Agendor</th><th>Situação</th><th>Valor</th><th>Responsável</th><th>Início</th><th></th>'+
+    '</tr></thead><tbody>'+
+    empPagina(lista).map(function(n){
+      return '<tr>'+
+        '<td><b>'+escapeHtml(n.titulo||"—")+'</b>'+(n.plano_contratado? '<div class="muted" style="font-size:12px;">'+escapeHtml(n.plano_contratado)+'</div>' : '')+'</td>'+
+        '<td style="min-width:200px;">'+(n.empresa_id? '<button class="linklike" style="text-align:left;" data-open-empresa="'+n.empresa_id+'">'+escapeHtml(n.empresa_nome||"empresa")+'</button>' : escapeHtml(n.empresa_nome||""))+(n.contato_nome? '<div class="muted" style="font-size:12px;">'+escapeHtml(n.contato_nome)+'</div>' : '')+(!n.empresa_nome && !n.contato_nome? '—' : '')+'</td>'+
+        '<td>'+escapeHtml(n.etapa||"—")+'</td>'+
+        '<td>'+empStatusPill(n.status)+(n.motivo_perda? '<div class="muted" style="font-size:12px;">'+escapeHtml(n.motivo_perda)+'</div>' : '')+'</td>'+
+        '<td style="white-space:nowrap;">'+fmtMoney(Number(n.valor)||0)+'</td>'+
+        '<td>'+escapeHtml(n.responsavel||"—")+'</td>'+
+        '<td style="white-space:nowrap;">'+fmtDateISO(n.data_inicio)+'</td>'+
+        '<td>'+(n.status==="Em andamento"? '<button class="linklike" data-emp-levar-funil="'+n.id+'" style="white-space:nowrap;">levar ao funil</button>' : '')+'</td>'+
+      '</tr>';
+    }).join("")+
+    '</tbody></table></div>'+empPaginacaoHtml(lista.length)+'</div></div>';
+}
+
+/* ---- ficha da empresa (painel lateral) ---- */
+function empKv(k, v){ return (v===null || v===undefined || v==="") ? "" : '<div class="kv-row"><span class="k">'+k+'</span><span style="text-align:right;">'+v+'</span></div>'; }
+function openEmpresaPanel(id){
+  var e = empPorId(id);
+  var root = document.getElementById("panel-root");
+  if(!root) return;
+  if(!e){ root.innerHTML=""; return; }
+  var wa = linkWhatsApp(e.telefone);
+  var contatos = empContatosDa(id), negAg = empNegociosAgendorDa(id), leads = empLeadsDa(id);
+  var endereco = [e.logradouro, e.numero, e.complemento].filter(Boolean).join(", ");
+  var cidade = [e.bairro, e.cidade? e.cidade+(e.uf? "/"+e.uf : "") : ""].filter(Boolean).join(" · ");
+  var body =
+    '<div class="side-panel-head"><div class="rowflex"><div><h2>'+escapeHtml(e.nome)+'</h2><div class="muted">'+escapeHtml(empFmtCNPJ(e.cnpj)||"sem CNPJ")+(e.responsavel? ' · '+escapeHtml(e.responsavel) : '')+'</div></div><button class="panel-close" id="panel-close">&times;</button></div>'+
+      '<div class="rowflex" style="margin-top:12px;gap:8px;">'+
+        '<button class="btn btn-primary btn-sm" id="emp-p-negocio">+ Criar negócio no funil</button>'+
+        '<button class="btn btn-ghost btn-sm" id="emp-p-editar">Editar empresa</button>'+
+      '</div></div>'+
+    '<div class="side-panel-body">'+
+      '<div class="side-panel-section"><h4>Contato</h4><div class="kv-list">'+
+        empKv("Telefone", e.telefone? escapeHtml(e.telefone) : '<span class="muted">—</span>')+
+        empKv("E-mail", e.email? '<a class="linklike" href="mailto:'+escapeHtml(e.email)+'">'+escapeHtml(e.email)+'</a>' : '<span class="muted">—</span>')+
+        empKv("Falar com", escapeHtml(e.nome_contato||e.representante_legal||""))+
+        empKv("Site", e.website? escapeHtml(e.website) : "")+
+        empKv("Instagram", escapeHtml(e.instagram||""))+
+        empKv("LinkedIn", escapeHtml(e.linkedin||""))+
+      '</div><div class="op-contato-acoes">'+
+        (wa? '<a class="btn btn-sm btn-concierge" href="'+wa+'" target="_blank" rel="noopener">WhatsApp</a>' : '')+
+        (e.telefone? '<a class="btn btn-sm" href="tel:'+soDigitos(e.telefone)+'">Ligar</a>' : '')+
+        (e.email? '<a class="btn btn-sm" href="mailto:'+escapeHtml(e.email)+'">Enviar e-mail</a>' : '')+
+      '</div></div>'+
+      '<div class="side-panel-section"><h4>Plano de saúde</h4><div class="kv-list">'+
+        empKv("Plano atual", escapeHtml(e.plano_atual||""))+
+        empKv("Valor plano atual", escapeHtml(e.valor_plano_atual||""))+
+        empKv("Novo plano", escapeHtml(e.novo_plano||""))+
+        empKv("Valor novo plano", e.valor_novo_plano!=null? fmtMoney(Number(e.valor_novo_plano)) : "")+
+        empKv("Porte", escapeHtml(e.porte||""))+
+        empKv("Nº de vidas", e.numero_vidas!=null? String(e.numero_vidas) : "")+
+        empKv("Beneficiários", escapeHtml(e.beneficiarios||""))+
+        empKv("Vigência", escapeHtml(e.vigencia||""))+
+        empKv("Coparticipação", escapeHtml(e.coparticipacao||""))+
+      '</div>'+(!(e.plano_atual||e.novo_plano||e.porte||e.numero_vidas!=null||e.beneficiarios||e.vigencia)? '<div class="muted">Sem informações de plano ainda.</div>' : '')+'</div>'+
+      '<div class="side-panel-section"><h4>Empresa</h4><div class="kv-list">'+
+        empKv("Razão social", escapeHtml(e.razao_social||""))+
+        empKv("Sócio I", escapeHtml(e.socio_1||""))+
+        empKv("Sócio II", escapeHtml(e.socio_2||""))+
+        empKv("Representante legal", escapeHtml(e.representante_legal||""))+
+        empKv("+ CNPJ", escapeHtml(e.cnpj_adicional||""))+
+        empKv("Endereço", escapeHtml(endereco))+
+        empKv("Bairro / cidade", escapeHtml(cidade))+
+        empKv("CEP", escapeHtml(e.cep||""))+
+        empKv("Categoria", escapeHtml(e.categoria||""))+
+        empKv("Origem", escapeHtml(e.origem||""))+
+        empKv("Setor", escapeHtml(e.setor||""))+
+        empKv("Produtos", escapeHtml(e.produtos||""))+
+        empKv("Cadastro", e.agendor_criado_em? fmtDateISO(e.agendor_criado_em)+' <span class="muted">(Agendor)</span>' : fmtDateISO(e.criado_em))+
+      '</div>'+(e.observacoes? '<div class="note-item">'+escapeHtml(e.observacoes)+'</div>' : '')+'</div>'+
+      (e.ultima_atividade || e.proxima_atividade? '<div class="side-panel-section"><h4>Última atividade no Agendor</h4>'+
+        (e.ultima_atividade? '<div class="activity-item"><div>'+escapeHtml(e.ultima_atividade)+'</div><div class="meta">'+fmtDateTime(e.ultima_atividade_em)+'</div></div>' : '')+
+        (e.proxima_atividade && e.proxima_atividade!==e.ultima_atividade? '<div class="activity-item"><div>Próxima: '+escapeHtml(e.proxima_atividade)+'</div><div class="meta">'+fmtDateTime(e.proxima_atividade_em)+'</div></div>' : '')+
+      '</div>' : '')+
+      '<div class="side-panel-section"><h4>Negócios no funil ('+leads.length+')</h4>'+
+        (leads.length? leads.map(function(l){
+          return '<div class="activity-item"><div><button class="linklike" data-emp-abrir-lead="'+l.id+'">'+escapeHtml(l.nome||l.empresa||"Negócio")+'</button> <span class="tag">'+escapeHtml(l.etapa||"—")+'</span></div><div class="meta">'+escapeHtml(l.produto||"")+' · '+escapeHtml(l.vendedor||"")+' · '+fmtMoney(l.valor_estimado)+'</div></div>';
+        }).join("") : '<div class="empty" style="padding:10px 6px;">Nenhum negócio no funil ainda.</div>')+
+      '</div>'+
+      '<div class="side-panel-section"><h4>Pessoas ('+contatos.length+')</h4>'+
+        (contatos.length? contatos.map(function(c){
+          var w = linkWhatsApp(c.telefone);
+          return '<div class="activity-item"><div><b>'+escapeHtml(c.nome)+'</b>'+(c.cargo? ' <span class="muted">· '+escapeHtml(c.cargo)+'</span>' : '')+'</div><div class="meta">'+
+            (c.telefone? (w? '<a class="linklike" href="'+w+'" target="_blank" rel="noopener">'+escapeHtml(c.telefone)+'</a>' : escapeHtml(c.telefone)) : '')+
+            (c.email? (c.telefone? ' · ' : '')+escapeHtml(c.email) : '')+
+            (!c.telefone && !c.email? 'sem contato' : '')+'</div></div>';
+        }).join("") : '<div class="empty" style="padding:10px 6px;">Nenhuma pessoa vinculada.</div>')+
+      '</div>'+
+      '<div class="side-panel-section"><h4>Histórico do Agendor ('+negAg.length+')</h4>'+
+        (negAg.length? negAg.map(function(n){
+          return '<div class="activity-item"><div><b>'+escapeHtml(n.titulo||"Negócio")+'</b> '+empStatusPill(n.status)+'</div><div class="meta">'+escapeHtml(n.etapa||"")+' · '+fmtMoney(Number(n.valor)||0)+' · '+escapeHtml(n.responsavel||"")+' · '+fmtDateISO(n.data_inicio)+
+            (n.status==="Em andamento"? ' · <button class="linklike" data-emp-levar-funil="'+n.id+'">levar ao funil</button>' : '')+'</div></div>';
+        }).join("") : '<div class="empty" style="padding:10px 6px;">Nenhum negócio no Agendor.</div>')+
+      '</div>'+
+    '</div>';
+  root.innerHTML = '<div class="panel-backdrop" id="panel-backdrop"><div class="side-panel">'+body+'</div></div>';
+  document.getElementById("panel-close").onclick = closeLeadDetailPanel;
+  document.getElementById("panel-backdrop").addEventListener("click", function(ev){ if(ev.target.id==="panel-backdrop") closeLeadDetailPanel(); });
+  document.getElementById("emp-p-negocio").onclick = function(){ empCriarNegocio(e); };
+  document.getElementById("emp-p-editar").onclick = function(){ openEmpresaModal(e); };
+  Array.prototype.forEach.call(root.querySelectorAll("[data-emp-abrir-lead]"), function(b){ b.onclick = function(){ openLeadDetailPanel(b.getAttribute("data-emp-abrir-lead")); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-emp-levar-funil]"), function(b){ b.onclick = function(){ empLevarAoFunil(b.getAttribute("data-emp-levar-funil")); }; });
+}
+
+/* ---- criar negócio no funil a partir da empresa / pessoa / negócio do Agendor ---- */
+function empVendedorPadrao(nome){
+  if(nome && VENDEDORES.indexOf(nome)>=0) return nome;
+  var eu = currentUserName();
+  return (eu && VENDEDORES.indexOf(eu)>=0) ? eu : VENDEDORES[0];
+}
+function empSeedNegocio(e, extra){
+  var c = e ? empContatosDa(e.id)[0] : null;
+  var seed = {
+    etapa:"Qualificação", produto:"Saúde",
+    vendedor: empVendedorPadrao(e && e.responsavel),
+    nome: (e && (e.nome_contato || e.representante_legal)) || (c && c.nome) || "",
+    empresa: e ? e.nome : "",
+    telefone: (e && e.telefone) || (c && c.telefone) || "",
+    email: (e && e.email) || (c && c.email) || "",
+    quantidade_vidas: e && e.numero_vidas ? e.numero_vidas : null,
+    origem: (e && e.origem) || "Base de empresas",
+    observacoes: e && e.plano_atual ? "Plano atual: "+e.plano_atual+(e.valor_plano_atual? " ("+e.valor_plano_atual+")" : "") : "",
+    empresa_id: e ? e.id : null
+  };
+  return Object.assign(seed, extra||{});
+}
+function empAbrirModalNegocio(seed, empresaId){
+  openLeadModal(null, function(leadId){
+    toast("Negócio criado no Funil Comercial.");
+    if(empresaId) openEmpresaPanel(empresaId);
+    else if(leadId) openLeadDetailPanel(leadId);
+  }, seed);
+}
+function empCriarNegocio(e){ empAbrirModalNegocio(empSeedNegocio(e), e.id); }
+function empCriarNegocioContato(contatoId){
+  var c = emp.contatos.filter(function(x){ return x.id===contatoId; })[0]; if(!c) return;
+  var e = c.empresa_id ? empPorId(c.empresa_id) : null;
+  var seed = empSeedNegocio(e, {nome:c.nome, telefone:c.telefone||(e&&e.telefone)||"", email:c.email||(e&&e.email)||"", vendedor: empVendedorPadrao(c.responsavel || (e&&e.responsavel)), origem: c.origem || (e&&e.origem) || "Base de empresas"});
+  if(!e){ seed.empresa = ""; seed.empresa_id = null; }
+  empAbrirModalNegocio(seed, e ? e.id : null);
+}
+function empLevarAoFunil(negocioId){
+  var n = emp.negocios.filter(function(x){ return x.id===negocioId; })[0]; if(!n) return;
+  var e = n.empresa_id ? empPorId(n.empresa_id) : null;
+  var c = n.contato_id ? emp.contatos.filter(function(x){ return x.id===n.contato_id; })[0] : null;
+  var obs = ["Trazido do Agendor: "+(n.titulo||""), n.etapa? "Etapa no Agendor: "+n.etapa : "", n.plano_contratado? "Plano: "+n.plano_contratado : "", n.informacoes||""].filter(Boolean).join("\n");
+  var seed = empSeedNegocio(e, {
+    nome: (c && c.nome) || n.contato_nome || (e && (e.nome_contato||e.representante_legal)) || "",
+    empresa: n.empresa_nome || (e && e.nome) || "",
+    vendedor: empVendedorPadrao(n.responsavel),
+    valor_estimado: Number(n.valor)||null,
+    quantidade_vidas: parseInt(n.n_vidas,10) || (e && e.numero_vidas) || null,
+    observacoes: obs
+  });
+  if(c){ seed.telefone = c.telefone || seed.telefone; seed.email = c.email || seed.email; }
+  empAbrirModalNegocio(seed, e ? e.id : null);
+}
+
+/* ---- cadastrar / editar empresa ---- */
+function empresaFormHtml(e){
+  e = e || {};
+  function inp(id, rot, v, extra){ return '<div class="field"><label>'+rot+'</label><input id="'+id+'" value="'+escapeHtml(v==null?"":v)+'"'+(extra||"")+'></div>'; }
+  var resp = TEAM.slice(); if(e.responsavel && resp.indexOf(e.responsavel)<0) resp.push(e.responsavel);
+  return '<div class="field row2">'+inp("ef-nome","Nome da empresa *",e.nome)+inp("ef-razao","Razão social",e.razao_social)+'</div>'+
+    '<div class="field row2">'+inp("ef-cnpj","CNPJ",empFmtCNPJ(e.cnpj),' inputmode="numeric"')+'<div class="field"><label>Responsável</label><select id="ef-resp"><option value="">—</option>'+resp.map(function(r){ return '<option'+(e.responsavel===r?' selected':'')+'>'+escapeHtml(r)+'</option>'; }).join("")+'</select></div></div>'+
+    '<div class="field row2">'+inp("ef-tel","Telefone / WhatsApp",e.telefone,' type="tel"')+inp("ef-email","E-mail",e.email,' type="email"')+'</div>'+
+    '<div class="field row2">'+inp("ef-contato","Falar com (nome do contato)",e.nome_contato)+inp("ef-rep","Representante legal",e.representante_legal)+'</div>'+
+    '<div class="field row2">'+inp("ef-plano","Plano atual",e.plano_atual)+inp("ef-vplano","Valor plano atual",e.valor_plano_atual)+'</div>'+
+    '<div class="field row3">'+inp("ef-vidas","Nº de vidas",e.numero_vidas,' type="number" min="0" step="1"')+
+      '<div class="field"><label>Porte</label><select id="ef-porte"><option value="">—</option>'+["02 A 29 VIDAS","30 A 99 VIDAS"].concat(e.porte && ["02 A 29 VIDAS","30 A 99 VIDAS"].indexOf(e.porte)<0? [e.porte] : []).map(function(p){ return '<option'+(e.porte===p?' selected':'')+'>'+escapeHtml(p)+'</option>'; }).join("")+'</select></div>'+
+      inp("ef-vig","Vigência",e.vigencia)+'</div>'+
+    '<div class="field row3">'+inp("ef-cidade","Cidade",e.cidade)+inp("ef-uf","UF",e.uf,' maxlength="2"')+inp("ef-cat","Categoria",e.categoria||"Cliente em potencial")+'</div>'+
+    '<div class="field"><label>Observações</label><textarea id="ef-obs">'+escapeHtml(e.observacoes||"")+'</textarea></div>';
+}
+function openEmpresaModal(existente){
+  openModal(existente? "Editar empresa" : "Nova empresa", empresaFormHtml(existente), async function(fechar){
+    function v(id){ var el=document.getElementById(id); return el ? el.value.trim() : ""; }
+    var dados = {
+      nome: v("ef-nome"), razao_social: v("ef-razao")||null, cnpj: soDigitos(v("ef-cnpj"))||null,
+      responsavel: v("ef-resp")||null, telefone: v("ef-tel")||null, email: v("ef-email")||null,
+      nome_contato: v("ef-contato")||null, representante_legal: v("ef-rep")||null,
+      plano_atual: v("ef-plano")||null, valor_plano_atual: v("ef-vplano")||null,
+      numero_vidas: parseInt(v("ef-vidas"),10)||null, porte: v("ef-porte")||null, vigencia: v("ef-vig")||null,
+      cidade: v("ef-cidade")||null, uf: (v("ef-uf")||"").toUpperCase()||null, categoria: v("ef-cat")||null,
+      observacoes: v("ef-obs")||null
+    };
+    if(!dados.nome){ toast("Informe o nome da empresa."); return; }
+    if(!existente && dados.cnpj){
+      var dup = emp.empresas.filter(function(x){ return soDigitos(x.cnpj)===dados.cnpj; })[0];
+      if(dup && !confirm("Já existe uma empresa com esse CNPJ (\""+dup.nome+"\"). Cadastrar mesmo assim?")) return;
+    }
+    var r;
+    if(existente){
+      dados.atualizado_em = new Date().toISOString();
+      r = await sb.from("empresas").update(dados).eq("id", existente.id).select(EMP_COLS_EMPRESA);
+    } else {
+      dados.criado_por = currentUser();
+      r = await sb.from("empresas").insert(dados).select(EMP_COLS_EMPRESA);
+    }
+    if(r.error){ console.error(r.error); toast("Erro ao salvar: "+r.error.message); return; }
+    var salvo = r.data && r.data[0];
+    if(salvo){
+      if(existente){ emp.empresas = emp.empresas.map(function(x){ return x.id===salvo.id ? salvo : x; }); }
+      else { emp.empresas.unshift(salvo); }
+    }
+    toast(existente? "Empresa atualizada." : "Empresa cadastrada.");
+    fechar(); render();
+    if(salvo) openEmpresaPanel(salvo.id);
+  });
+}
+function exportarEmpresasExcel(){
+  var lista = empresasFiltradas();
+  var cab = ["Nome","Razão social","CNPJ","Responsável","Telefone","E-mail","Falar com","Cidade","UF","Categoria","Origem","Porte","Nº vidas","Plano atual","Valor plano atual","Vigência","Coparticipação","Observações"];
+  var linhas = lista.map(function(e){ return [e.nome,e.razao_social,empFmtCNPJ(e.cnpj),e.responsavel,e.telefone,e.email,e.nome_contato||e.representante_legal,e.cidade,e.uf,e.categoria,e.origem,e.porte,e.numero_vidas,e.plano_atual,e.valor_plano_atual,e.vigencia,e.coparticipacao,e.observacoes].map(function(x){ return x==null? "" : x; }); });
+  var ws = XLSX.utils.aoa_to_sheet([cab].concat(linhas));
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Empresas");
+  XLSX.writeFile(wb, "empresas-oneplus-"+todayISO()+".xlsx");
+}
+function wireEmpresas(){
+  if(state.tab!=="empresas") return;
+  var rec = document.getElementById("emp-recarregar"); if(rec) rec.onclick = function(){ emp.erro=null; carregarEmpresas(true); };
+  var nova = document.getElementById("emp-nova"); if(nova) nova.onclick = function(){ openEmpresaModal(null); };
+  var exp = document.getElementById("emp-exportar"); if(exp) exp.onclick = exportarEmpresasExcel;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-emp-aba-tab]"), function(t){
+    t.onclick = function(){ emp.aba = t.getAttribute("data-emp-aba-tab"); emp.pagina = 0; emp.f.responsavel=""; emp.f.status=""; render(); };
+  });
+  var busca = document.getElementById("emp-busca");
+  if(busca){ busca.oninput = function(){ emp.f.busca = busca.value; emp.pagina = 0; render(); var el=document.getElementById("emp-busca"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }; }
+  [["emp-f-resp","responsavel"],["emp-f-cat","categoria"],["emp-f-porte","porte"],["emp-f-status","status"]].forEach(function(p){
+    var el = document.getElementById(p[0]); if(el) el.onchange = function(){ emp.f[p[1]] = el.value; emp.pagina = 0; render(); };
+  });
+  var limpar = document.getElementById("emp-limpar"); if(limpar) limpar.onclick = function(){ emp.f = {busca:"", responsavel:"", categoria:"", porte:"", status:""}; emp.pagina = 0; render(); };
+  var ant = document.getElementById("emp-pag-ant"); if(ant) ant.onclick = function(){ if(emp.pagina>0){ emp.pagina--; render(); window.scrollTo(0,0); } };
+  var prox = document.getElementById("emp-pag-prox"); if(prox) prox.onclick = function(){ emp.pagina++; render(); window.scrollTo(0,0); };
+  Array.prototype.forEach.call(document.querySelectorAll("#main [data-open-empresa]"), function(el){
+    el.onclick = function(ev){ if(ev.target.closest("[data-emp-criar-negocio]")) return; openEmpresaPanel(el.getAttribute("data-open-empresa")); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-emp-criar-negocio]"), function(b){
+    b.onclick = function(ev){ ev.stopPropagation(); var e = empPorId(b.getAttribute("data-emp-criar-negocio")); if(e) empCriarNegocio(e); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-emp-negocio-contato]"), function(b){ b.onclick = function(){ empCriarNegocioContato(b.getAttribute("data-emp-negocio-contato")); }; });
+  Array.prototype.forEach.call(document.querySelectorAll("#main [data-emp-levar-funil]"), function(b){ b.onclick = function(){ empLevarAoFunil(b.getAttribute("data-emp-levar-funil")); }; });
 }
 
 /* ================= IMPLANTAÇÃO ================= */
@@ -2992,6 +3432,7 @@ function viewParametros(){
 /* ================= WIRE ================= */
 function wireActions(){
   wireMoneyInputs(document);
+  wireEmpresas();
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-hist-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-hist-cliente");})[0]; if(c) openHistoricoModal(c); }; });
