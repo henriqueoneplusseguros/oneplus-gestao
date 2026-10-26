@@ -725,10 +725,33 @@ function viewClientes(){
         '<div class="info-item"><span class="k">Revisão</span><span>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</span></div>'+
       '</div>'+
       '<div class="client-card-foot">'+
-        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button>'+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
+        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
       '</div>'+
     '</div>';
   }).join("")+'</div>');
+}
+
+/* ================= CLIENTES: acesso ao portal da operadora (login/senha da empresa) ================= */
+function acessoPortalModal(c){
+  var url = c.portal_url || "";
+  var href = url && !/^https?:\/\//i.test(url) ? "https://"+url : url;
+  var body = '<div class="kv-list">'+
+    '<div class="kv-row"><span class="k">Portal</span><span>'+(href? '<a class="linklike" href="'+escapeHtml(href)+'" target="_blank" rel="noopener">'+escapeHtml(url)+'</a>' : '<span class="muted">—</span>')+'</span></div>'+
+    '<div class="kv-row"><span class="k">Login</span><span>'+(c.portal_login? '<b>'+escapeHtml(c.portal_login)+'</b> <button type="button" class="linklike" id="ap-copiar-login">copiar</button>' : '<span class="muted">—</span>')+'</span></div>'+
+    '<div class="kv-row"><span class="k">Senha</span><span>'+(c.portal_senha? '<b id="ap-senha">••••••••</b> <button type="button" class="linklike" id="ap-mostrar">mostrar</button> <button type="button" class="linklike" id="ap-copiar-senha">copiar</button>' : '<span class="muted">—</span>')+'</span></div>'+
+  '</div>'+
+  (!c.portal_login && !c.portal_senha? '<div class="muted" style="margin-top:10px;">Ainda não cadastrado. Clique em "editar" no cliente e preencha a parte "Acesso ao portal da operadora".</div>' : '');
+  openModal("Acesso ao portal — "+clienteLabel(c), body, function(fechar){ fechar(); }, "Fechar");
+  function copiar(txt, msg){
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(function(){ toast(msg); }, function(){ toast("Não consegui copiar — selecione e copie manualmente."); }); }
+    else toast("Não consegui copiar — selecione e copie manualmente.");
+  }
+  var bl = document.getElementById("ap-copiar-login"); if(bl) bl.onclick = function(){ copiar(c.portal_login, "Login copiado."); };
+  var bs = document.getElementById("ap-copiar-senha"); if(bs) bs.onclick = function(){ copiar(c.portal_senha, "Senha copiada."); };
+  var bm = document.getElementById("ap-mostrar"); if(bm) bm.onclick = function(){
+    var el = document.getElementById("ap-senha"); var vis = bm.textContent==="ocultar";
+    el.textContent = vis ? "••••••••" : c.portal_senha; bm.textContent = vis ? "mostrar" : "ocultar";
+  };
 }
 
 function clienteFormHtml(c, deps, opts){
@@ -763,6 +786,12 @@ function clienteFormHtml(c, deps, opts){
   linhaContato+
   '<div class="field"><label>Responsável financeiro (quem recebe o boleto, se for diferente do titular)</label><input id="f-resp-financeiro" value="'+escapeHtml(c.responsavel_financeiro||"")+'" placeholder="ex: nome de quem cuida do financeiro na empresa"></div>'+
   '<div class="field"><label>Link da pasta no Drive (documentos do cliente)</label><input id="f-drive-link" value="'+escapeHtml(c.drive_link||"")+'" placeholder="https://drive.google.com/..."></div>'+
+  '</fieldset>'+
+  '<fieldset><legend>Acesso ao portal da operadora (login da empresa)</legend>'+
+  '<div class="field"><label>Site do portal</label><input id="f-portal-url" value="'+escapeHtml(c.portal_url||"")+'" placeholder="ex: https://portal.operadora.com.br"></div>'+
+  '<div class="field row2"><div class="field"><label>Login</label><input id="f-portal-login" autocomplete="off" value="'+escapeHtml(c.portal_login||"")+'"></div>'+
+    '<div class="field"><label>Senha</label><div class="rowflex" style="flex-wrap:nowrap;"><input id="f-portal-senha" type="password" autocomplete="new-password" style="flex:1" value="'+escapeHtml(c.portal_senha||"")+'"><button type="button" class="btn btn-ghost btn-sm" id="f-portal-mostrar">mostrar</button></div></div></div>'+
+  '<div class="muted" style="font-size:11.5px;">Fica visível só para a equipe logada no sistema.</div>'+
   '</fieldset>'+
   '<fieldset><legend>Endereço</legend>'+
   '<div class="field row3"><div class="field"><label>CEP</label><input id="f-cep" value="'+escapeHtml(c.cep||"")+'" placeholder="00000-000" maxlength="9"></div><div class="field"><label>Número</label><input id="f-end-numero" value="'+escapeHtml(c.endereco_numero||"")+'"></div><div class="field"><label>Complemento (apto/bloco)</label><input id="f-end-compl" value="'+escapeHtml(c.endereco_complemento||"")+'"></div></div>'+
@@ -885,6 +914,8 @@ function refreshTitularSelects(){
   });
 }
 function wireClienteFormExtra(){
+  var btnMostrarSenha = document.getElementById("f-portal-mostrar");
+  if(btnMostrarSenha) btnMostrarSenha.onclick = function(){ var el = document.getElementById("f-portal-senha"); var vis = el.type==="text"; el.type = vis ? "password" : "text"; btnMostrarSenha.textContent = vis ? "mostrar" : "ocultar"; };
   var elNasc = document.getElementById("f-nasc");
   var elIdadeOut = document.getElementById("f-idade-out");
   function updateIdade(){
@@ -1067,6 +1098,9 @@ function readClienteForm(){
       endereco_cidade: document.getElementById("f-end-cidade").value.trim(),
       endereco_uf: document.getElementById("f-end-uf").value.trim(),
       dados_bancarios: banco,
+      portal_url: document.getElementById("f-portal-url").value.trim() || null,
+      portal_login: document.getElementById("f-portal-login").value.trim() || null,
+      portal_senha: document.getElementById("f-portal-senha").value || null,
       observacoes: document.getElementById("f-obs").value.trim()
     },
     deps: deps
@@ -3810,6 +3844,7 @@ function wireActions(){
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-hist-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-hist-cliente");})[0]; if(c) openHistoricoModal(c); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-acesso-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-acesso-cliente");})[0]; if(c) acessoPortalModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-carencias-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-carencias-cliente");})[0]; if(c) openCarenciasModal(c); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-del-cliente]"), function(btn){
     btn.onclick=function(){
