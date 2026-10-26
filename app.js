@@ -458,6 +458,8 @@ function emailDoResponsavel(nome){
   var e = state.equipe.filter(function(x){ return x.nome===nome; })[0];
   return e ? e.email : null;
 }
+/* Relatórios de vendas e previsão de comissão: só o Henrique. */
+function podeVerRelatorios(){ return currentUserName()==="Henrique"; }
 /* Financeiro é restrito — só Henrique e Kelly veem esse setor. */
 function podeVerFinanceiro(){
   var nome = currentUserName();
@@ -567,7 +569,7 @@ var NAV_GRUPOS = [
 function navGrupoAberto(nome){ try { return localStorage.getItem("op-menu-"+nome) !== "0"; } catch(e){ return true; } }
 function renderNav(){
   var nav = document.getElementById("nav");
-  var itens = NAV.filter(function(n){ return n.id!=="financeiro" || podeVerFinanceiro(); });
+  var itens = NAV.filter(function(n){ if(n.id==="financeiro") return podeVerFinanceiro(); if(n.id==="relatorios") return podeVerRelatorios(); return true; });
   var porId = {}; itens.forEach(function(n){ porId[n.id]=n; });
   var usados = {};
   function item(n){ usados[n.id]=1; return '<div class="navitem'+(state.tab===n.id?' active':'')+'" data-tab="'+n.id+'">'+ICONS[n.icon]+'<span>'+n.label+'</span></div>'; }
@@ -603,7 +605,7 @@ function render(){
   else if(state.tab==="clientes") main.innerHTML = viewClientes();
   else if(state.tab==="funil") main.innerHTML = viewFunil();
   else if(state.tab==="empresas") main.innerHTML = viewEmpresas();
-  else if(state.tab==="relatorios") main.innerHTML = viewRelatorios();
+  else if(state.tab==="relatorios") main.innerHTML = podeVerRelatorios()? viewRelatorios() : '<div class="empty">Você não tem acesso a este setor.</div>';
   else if(state.tab==="implantacao") main.innerHTML = viewImplantacao();
   else if(state.tab==="tarefas") main.innerHTML = viewTarefas();
   else if(state.tab==="agenda") main.innerHTML = viewAgenda();
@@ -1962,7 +1964,7 @@ function viewFunil(){
   var metaQtd = state.params.meta_vendas_mensal||0;
   var faltamQtd = Math.max(metaQtd - vendasQtdMes, 0);
 
-  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+leadsBase.length+' de '+state.leads.length+' oportunidade(s) · arraste o cartão (ou clique nele) · negócios ganhos seguem na aba Implantação</div></div><div class="rowflex"><button class="btn btn-ghost" id="btn-relatorios">📊 Relatórios</button><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div></div>';
+  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+leadsBase.length+' de '+state.leads.length+' oportunidade(s) · arraste o cartão (ou clique nele) · negócios ganhos seguem na aba Implantação</div></div><div class="rowflex">'+(podeVerRelatorios()? '<button class="btn btn-ghost" id="btn-relatorios">📊 Relatórios</button>' : '')+'<button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div></div>';
 
   var abertosFiltrados = leadsBase.filter(function(l){ return l.etapa!=="Ganho" && l.etapa!=="Perdido"; });
   var valorAberto = abertosFiltrados.reduce(function(s,l){ return s+(l.valor_estimado||0); },0);
@@ -3163,6 +3165,7 @@ function viewRelatorios(){
   return header + filtros + tiles + tabelaMes + previsao + grupos + tabelaContratos;
 }
 function exportarRelatoriosExcel(){
+  if(!podeVerRelatorios()) return;
   var vendas = relVendasFiltradas(), verComissao = podeVerFinanceiro();
   var wb = XLSX.utils.book_new();
   var cabC = ["Cliente / empresa","Contato","Situação","Vendedor(a)","Produto","Operadora","Plano","Vidas","Valor mensal (R$)","Ganho em","Início vigência","Motivo (recusa/desistência)","Trocas de plano"];
@@ -3195,7 +3198,7 @@ function exportarRelatoriosExcel(){
   XLSX.writeFile(wb, "relatorio-vendas-oneplus-"+todayISO()+".xlsx");
 }
 function wireRelatorios(){
-  if(state.tab!=="relatorios") return;
+  if(state.tab!=="relatorios" || !podeVerRelatorios()) return;
   [["rel-de","de"],["rel-ate","ate"],["rel-vendedor","vendedor"],["rel-produto","produto"],["rel-operadora","operadora"],["rel-situacao","situacao"]].forEach(function(p){
     var el = document.getElementById(p[0]); if(el) el.onchange = function(){ relFiltro[p[1]] = el.value; render(); };
   });
