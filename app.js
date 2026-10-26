@@ -16,7 +16,7 @@ var VENDEDORES = ["Henrique","Alana"];
 var PRODUTOS = ["Saúde","Vida","Consórcio"];
 var ETAPAS = ["Qualificação","Primeiro Contato","Proposta Enviada","Negociação","Ganho","Perdido"];
 var LIMITE_DIAS_PARADO = 14; // acima disso o cartão ganha o selo de "negócio parado"
-var MOTIVOS_PERDA = ["Preço","Concorrência","Sem retorno do cliente","Desistiu","Desistência após fechamento (durante a implantação)","Outro"];
+var MOTIVOS_PERDA = ["Preço","Concorrência","Sem retorno do cliente","Desistiu","Desistência após fechamento (durante a implantação)","Recusa da operadora (sem solução)","Outro"];
 var OPERADORAS = ["Omint","Care Plus","Amil","SulAmérica","Bradesco","NotreDame","Prevent Sênior","MedSênior","Porto Seguro","São Cristóvão","Ever","Alice","Outros"];
 var CANAIS = ["WhatsApp","Ligação","E-mail","Presencial"];
 var CANAIS_TAREFA = ["Ligar","Reunião","WhatsApp","E-mail","Outro"];
@@ -533,6 +533,7 @@ var NAV = [
   {id:"painel", label:"Painel", icon:"grid"},
   {id:"clientes", label:"Clientes", icon:"users"},
   {id:"funil", label:"Funil Comercial", icon:"filter"},
+  {id:"relatorios", label:"Relatórios", icon:"chart"},
   {id:"empresas", label:"Empresas", icon:"building"},
   {id:"implantacao", label:"Implantação", icon:"flag"},
   {id:"tarefas", label:"Tarefas", icon:"check"},
@@ -552,12 +553,13 @@ var ICONS = {
   sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h9M17 6h3M4 12h3M9 12h11M4 18h13M20 18h0"/><circle cx="14" cy="6" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
   flag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4"/><path d="M5 4h13l-3 4.5L18 13H5"/></svg>',
   building:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16"/><path d="M15 9h4a1 1 0 0 1 1 1v11"/><path d="M3 21h18M8 8h3M8 12h3M8 16h3"/></svg>',
+  chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   receipt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>'
 };
 var NAV_GRUPOS = [
   {nome:null, itens:["painel"]},
   {nome:null, itens:["clientes"]},
-  {nome:null, itens:["funil","empresas"]},
+  {nome:null, itens:["funil","relatorios","empresas"]},
   {nome:null, itens:["implantacao"]},
   {nome:"Concierge", itens:["tarefas","agenda","posvenda"]},
   {nome:"Gestão", itens:["financeiro","parametros"]}
@@ -601,6 +603,7 @@ function render(){
   else if(state.tab==="clientes") main.innerHTML = viewClientes();
   else if(state.tab==="funil") main.innerHTML = viewFunil();
   else if(state.tab==="empresas") main.innerHTML = viewEmpresas();
+  else if(state.tab==="relatorios") main.innerHTML = viewRelatorios();
   else if(state.tab==="implantacao") main.innerHTML = viewImplantacao();
   else if(state.tab==="tarefas") main.innerHTML = viewTarefas();
   else if(state.tab==="agenda") main.innerHTML = viewAgenda();
@@ -1959,7 +1962,7 @@ function viewFunil(){
   var metaQtd = state.params.meta_vendas_mensal||0;
   var faltamQtd = Math.max(metaQtd - vendasQtdMes, 0);
 
-  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+leadsBase.length+' de '+state.leads.length+' oportunidade(s) · arraste o cartão (ou clique nele) · negócios ganhos seguem na aba Implantação</div></div><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div>';
+  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+leadsBase.length+' de '+state.leads.length+' oportunidade(s) · arraste o cartão (ou clique nele) · negócios ganhos seguem na aba Implantação</div></div><div class="rowflex"><button class="btn btn-ghost" id="btn-relatorios">📊 Relatórios</button><button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div></div>';
 
   var abertosFiltrados = leadsBase.filter(function(l){ return l.etapa!=="Ganho" && l.etapa!=="Perdido"; });
   var valorAberto = abertosFiltrados.reduce(function(s,l){ return s+(l.valor_estimado||0); },0);
@@ -2841,6 +2844,369 @@ function wireEmpresas(){
   Array.prototype.forEach.call(document.querySelectorAll("#main [data-emp-levar-funil]"), function(b){ b.onclick = function(){ empLevarAoFunil(b.getAttribute("data-emp-levar-funil")); }; });
 }
 
+/* ================= IMPLANTAÇÃO: troca de plano / valor / vigência =================
+   Quando a operadora recusa o contrato (ou o cliente muda de ideia) durante a implantação,
+   o negócio continua o mesmo — só muda operadora, plano, valor e vigência. A troca atualiza o
+   negócio (e por isso a meta/relatórios), o pré-cadastro e o cliente (se já existir), e fica
+   registrada no histórico da implantação (implantacoes.historico_plano). */
+var MOTIVOS_TROCA_PLANO = ["Recusa da operadora","Pedido do cliente","Ajuste de valor / tabela","Mudança de vigência","Outro"];
+var EDITAM_PLANO_IMPLANTACAO = ["Henrique","Kelly","Alana"];
+function podeEditarPlanoImplantacao(){ return EDITAM_PLANO_IMPLANTACAO.indexOf(currentUserName()) >= 0; }
+function historicoPlanoDe(leadId){
+  var imp = implantacaoDoLead(leadId);
+  var h = imp && imp.historico_plano;
+  if(typeof h === "string"){ try { h = JSON.parse(h); } catch(e){ h = []; } }
+  return Array.isArray(h) ? h : [];
+}
+function planoNomeDoLead(l){ return [l.operadora, l.categoria_plano].filter(Boolean).join(" — "); }
+function resumoPlanoTexto(p){
+  return [p.operadora||"sem operadora", p.categoria_plano||"", fmtMoney(p.valor_estimado||0), p.quantidade_vidas? p.quantidade_vidas+" vida(s)" : "", p.vigencia_inicio? "vigência "+fmtDateISO(p.vigencia_inicio) : ""].filter(Boolean).join(" · ");
+}
+function planoContratadoHtml(lead){
+  var hist = historicoPlanoDe(lead.id);
+  return '<fieldset style="margin-bottom:12px;"><legend>Plano contratado</legend>'+
+    '<div class="kv-list">'+
+      '<div class="kv-row"><span class="k">Operadora</span><span>'+escapeHtml(lead.operadora||"—")+'</span></div>'+
+      '<div class="kv-row"><span class="k">Plano / categoria</span><span>'+escapeHtml(lead.categoria_plano||"—")+'</span></div>'+
+      '<div class="kv-row"><span class="k">Valor mensal do contrato</span><span><b>'+fmtMoney(lead.valor_estimado||0)+'</b></span></div>'+
+      '<div class="kv-row"><span class="k">Vidas</span><span>'+(lead.quantidade_vidas||"—")+'</span></div>'+
+      '<div class="kv-row"><span class="k">Início de vigência</span><span>'+(lead.vigencia_inicio? fmtDateISO(lead.vigencia_inicio) : "—")+'</span></div>'+
+    '</div>'+
+    (podeEditarPlanoImplantacao()?
+      '<button type="button" class="btn btn-ghost btn-sm" id="im-trocar-plano" style="justify-self:start;">✏️ Alterar operadora, plano, valor ou vigência</button>' :
+      '<div class="muted" style="font-size:12px;">Alteração de plano/valor/vigência: só Henrique, Kelly e Alana.</div>')+
+    (hist.length? '<div style="margin-top:6px;"><div class="muted" style="font-size:12px;font-weight:700;">Histórico de trocas</div>'+
+      hist.slice().reverse().map(function(h){
+        return '<div class="activity-item" style="margin-top:4px;"><div><span class="tag">'+escapeHtml(h.motivo||"Troca")+'</span> '+escapeHtml(resumoPlanoTexto(h.de||{}))+' <b>→</b> '+escapeHtml(resumoPlanoTexto(h.para||{}))+'</div>'+
+          '<div class="meta">'+fmtDateTime(h.em)+(h.por? ' · '+escapeHtml(String(h.por).split("@")[0]) : '')+(h.obs? ' · '+escapeHtml(h.obs) : '')+'</div></div>';
+      }).join("")+'</div>' : '')+
+  '</fieldset>';
+}
+function openTrocaPlanoModal(lead){
+  if(!podeEditarPlanoImplantacao()){ toast("Só Henrique, Kelly e Alana podem alterar o plano."); return; }
+  var operadoraAtual = lead.operadora && OPERADORAS.indexOf(lead.operadora)===-1 ? "Outros" : (lead.operadora||"");
+  var operadoraOutros = (lead.operadora && OPERADORAS.indexOf(lead.operadora)===-1) ? lead.operadora : "";
+  var body =
+    '<div class="helpbox">Use quando a operadora recusar o contrato ou o cliente mudar de plano. O negócio continua o mesmo: a meta, as vendas do mês e os relatórios passam a usar os valores novos, e a troca fica registrada no histórico.</div>'+
+    '<div class="field row2"><div class="field"><label>Nova operadora</label><select id="tp-operadora"><option value="">—</option>'+
+      OPERADORAS.map(function(o){ return '<option'+(operadoraAtual===o?' selected':'')+'>'+o+'</option>'; }).join("")+'</select></div>'+
+      '<div class="field" id="tp-outros-wrap" style="'+(operadoraAtual==="Outros"?"":"display:none;")+'"><label>Qual operadora?</label><input id="tp-outros" value="'+escapeHtml(operadoraOutros)+'"></div></div>'+
+    '<div class="field"><label>Plano / categoria</label><input id="tp-categoria" value="'+escapeHtml(lead.categoria_plano||"")+'" placeholder="ex: Alice Conforto, Amil S750..."></div>'+
+    '<div class="field row2">'+moneyFieldHtml("tp-valor", lead.valor_estimado, "Novo valor mensal do contrato (R$)")+
+      '<div class="field"><label>Vidas</label><input type="number" min="0" step="1" id="tp-vidas" value="'+(lead.quantidade_vidas||"")+'"></div></div>'+
+    '<div class="field row2"><div class="field"><label>Início de vigência</label><input type="date" id="tp-vigencia" value="'+escapeHtml((lead.vigencia_inicio||"").slice(0,10))+'"></div>'+
+      '<div class="field"><label>Motivo da troca</label><select id="tp-motivo">'+MOTIVOS_TROCA_PLANO.map(function(m){ return '<option>'+m+'</option>'; }).join("")+'</select></div></div>'+
+    '<div class="field"><label>Observação (opcional)</label><input id="tp-obs" placeholder="ex: Amil recusou por DLP; fechado Alice com vigência 01/11"></div>';
+  openModal("Alterar plano — "+(lead.nome||lead.empresa||"negócio"), body, async function(closeFn){
+    var opSel = document.getElementById("tp-operadora").value;
+    var operadora = opSel==="Outros" ? document.getElementById("tp-outros").value.trim() : opSel;
+    var novo = {
+      operadora: operadora || null,
+      categoria_plano: document.getElementById("tp-categoria").value.trim() || null,
+      valor_estimado: parseMoneyBR(document.getElementById("tp-valor").value),
+      quantidade_vidas: parseInt(document.getElementById("tp-vidas").value,10) || null,
+      vigencia_inicio: document.getElementById("tp-vigencia").value || null
+    };
+    var antigo = {operadora: lead.operadora||null, categoria_plano: lead.categoria_plano||null, valor_estimado: lead.valor_estimado||0, quantidade_vidas: lead.quantidade_vidas||null, vigencia_inicio: lead.vigencia_inicio? String(lead.vigencia_inicio).slice(0,10) : null};
+    var mudou = Object.keys(novo).some(function(k){ return String(novo[k]==null?"":novo[k]) !== String(antigo[k]==null?"":antigo[k]); });
+    if(!mudou){ toast("Nada foi alterado."); return; }
+    var btn = document.getElementById("modal-save"); if(btn){ btn.disabled = true; btn.textContent = "Salvando…"; }
+    var r = await sb.from("leads").update(novo).eq("id", lead.id);
+    if(r.error){
+      console.error(r.error);
+      if(btn){ btn.disabled = false; btn.textContent = "Salvar alteração"; }
+      toast(/vigencia_inicio/.test(r.error.message||"") ? "Falta a atualização do banco (coluna de vigência)." : "Erro ao salvar: "+r.error.message);
+      return;
+    }
+    var entrada = {em: new Date().toISOString(), por: currentUser(), motivo: document.getElementById("tp-motivo").value, obs: document.getElementById("tp-obs").value.trim(), de: antigo, para: novo};
+    var imp = implantacaoDoLead(lead.id);
+    var hist = historicoPlanoDe(lead.id).concat([entrada]);
+    var patchImp = {historico_plano: hist};
+    if(imp && imp.pre_cadastro && imp.pre_cadastro.data){
+      var pc = JSON.parse(JSON.stringify(imp.pre_cadastro));
+      pc.data.plano_nome = planoNomeDoLead(novo) || pc.data.plano_nome;
+      pc.data.valor_contrato_total = novo.valor_estimado;
+      if(novo.vigencia_inicio) pc.data.vigencia_inicio = novo.vigencia_inicio;
+      patchImp.pre_cadastro = pc;
+    }
+    var ri = imp ? await sb.from("implantacoes").update(patchImp).eq("id", imp.id)
+                 : await sb.from("implantacoes").insert(Object.assign({lead_id: lead.id, responsavel: "Kelly", criado_por: currentUser()}, patchImp));
+    if(ri.error){ console.error(ri.error); toast("Plano salvo, mas o histórico não gravou: "+ri.error.message); }
+    var cli = clienteDoLead(lead.id);
+    if(cli){
+      var patchCli = {plano_nome: planoNomeDoLead(novo) || cli.plano_nome, valor_contrato_total: novo.valor_estimado};
+      if(novo.vigencia_inicio) patchCli.vigencia_inicio = novo.vigencia_inicio;
+      var rc = await sb.from("clientes").update(patchCli).eq("id", cli.id);
+      if(rc.error) console.error(rc.error);
+      await reload("clientes");
+    }
+    await reload("leads");
+    await reload("implantacoes");
+    toast("Plano atualizado.");
+    closeFn();
+    var atualizado = state.leads.filter(function(x){ return x.id===lead.id; })[0];
+    if(atualizado) openImplantacaoModal(atualizado);
+  }, "Salvar alteração");
+  var sel = document.getElementById("tp-operadora"), wrap = document.getElementById("tp-outros-wrap");
+  if(sel && wrap) sel.addEventListener("change", function(){ wrap.style.display = sel.value==="Outros" ? "" : "none"; });
+}
+
+/* ================= RELATÓRIOS DE VENDAS =================
+   Tudo calculado a partir dos negócios do funil que já foram "Ganho" (têm data_ganho).
+   Situação de cada venda:
+     Ativa          → implantação concluída ou já virou cliente
+     Em implantação → ganho, ainda na aba Implantação
+     Recusada       → voltou para "Perdido" com motivo de recusa da operadora
+     Desistência    → voltou para "Perdido" por outro motivo (ex: "cliente desistiu")
+   Comissão (só Henrique e Kelly veem): mesma regra do Financeiro — parcelas cheias
+   (params.parcelas_cheias) + vitalício mensal (params.percentual_vitalicio), líquido de imposto. */
+var relFiltro = {de:"", ate:"", vendedor:"", produto:"", operadora:"", situacao:""};
+var REL_SITUACOES = ["Ativa","Em implantação","Recusada","Desistência"];
+function relSituacao(l){
+  if(l.etapa==="Perdido") return /recus/i.test(l.motivo_perda||"") ? "Recusada" : "Desistência";
+  var imp = implantacaoDoLead(l.id);
+  if((imp && imp.concluida) || clienteDoLead(l.id)) return "Ativa";
+  return "Em implantação";
+}
+function relSituacaoPill(s){
+  var cls = s==="Ativa" ? "pill-ok" : (s==="Em implantação" ? "pill-warn" : "pill-bad");
+  return '<span class="pill '+cls+'">'+s+'</span>';
+}
+function relVendasTodas(){ return state.leads.filter(function(l){ return !!l.data_ganho; }); }
+function relPrimeiroMes(){
+  var ds = state.leads.map(function(l){ return l.data_ganho || l.criado_em; }).filter(Boolean).sort();
+  return ds.length ? monthKeyFromISO(ds[0]) : todayMonthKey();
+}
+function relMeses(de, ate){
+  var out = [], mk = de, n = 0;
+  while(mk <= ate && n < 60){ out.push(mk); mk = monthKeyAdd(mk,1); n++; }
+  return out;
+}
+function relValorContrato(l){
+  var cli = clienteDoLead(l.id);
+  return (cli && cli.valor_contrato_total) || l.valor_estimado || 0;
+}
+function relComissao(l){
+  var p = state.params || {}, v = relValorContrato(l), liq = 1 - (p.taxa_imposto||0);
+  var cli = clienteDoLead(l.id);
+  return {
+    parcelas: v * (p.parcelas_cheias||3) * liq,
+    bonus: ((cli && cli.bonus_parcela4)||0) * liq,
+    vitalicio: v * (p.percentual_vitalicio||0) * liq
+  };
+}
+function relVendasFiltradas(){
+  var f = relFiltro;
+  return relVendasTodas().filter(function(l){
+    var mk = monthKeyFromISO(l.data_ganho);
+    if(f.de && mk < f.de) return false;
+    if(f.ate && mk > f.ate) return false;
+    if(f.vendedor && l.vendedor!==f.vendedor) return false;
+    if(f.produto && l.produto!==f.produto) return false;
+    if(f.operadora && (l.operadora||"—")!==f.operadora) return false;
+    if(f.situacao && relSituacao(l)!==f.situacao) return false;
+    return true;
+  }).sort(function(a,b){ return (b.data_ganho||"") < (a.data_ganho||"") ? -1 : 1; });
+}
+function relSoma(arr, fn){ return arr.reduce(function(s,x){ return s + (fn(x)||0); }, 0); }
+function relAgrupar(arr, chaveFn){
+  var m = {}; arr.forEach(function(x){ var k = chaveFn(x) || "—"; (m[k] = m[k] || []).push(x); }); return m;
+}
+/* Previsão de comissão para um mês: carteira (clientes cadastrados) + vendas ainda em implantação. */
+function relPrevisaoMes(mk){
+  var carteira = faturamentoDoMes(mk, state.clientes, state.params);
+  var novas = 0;
+  state.leads.forEach(function(l){
+    if(!l.data_ganho || l.etapa!=="Ganho" || clienteDoLead(l.id)) return;
+    novas += faturamentoDoMes(mk, [{data_fechamento: l.vigencia_inicio || l.data_ganho, valor_contrato_total: l.valor_estimado||0, status:"Ativo"}], state.params);
+  });
+  return {carteira: carteira, novas: novas, total: carteira + novas};
+}
+function relTrocasDePlano(vendas){
+  var n = 0, revertidas = 0;
+  vendas.forEach(function(l){
+    var h = historicoPlanoDe(l.id);
+    if(h.length) n++;
+    if(h.some(function(x){ return /recus/i.test(x.motivo||""); }) && l.etapa!=="Perdido") revertidas++;
+  });
+  return {comTroca: n, recusasRevertidas: revertidas};
+}
+function relSelect(id, rotulo, valores, atual, todos){
+  return '<div class="field"><label>'+rotulo+'</label><select id="'+id+'"><option value="">'+(todos||"Todos")+'</option>'+
+    valores.map(function(v){ var val = (typeof v==="object")? v[0] : v, lab = (typeof v==="object")? v[1] : v; return '<option value="'+escapeHtml(val)+'"'+(atual===val?' selected':'')+'>'+escapeHtml(lab)+'</option>'; }).join("")+'</select></div>';
+}
+
+function viewRelatorios(){
+  var hoje = todayMonthKey(), inicio = relPrimeiroMes();
+  if(!relFiltro.de) relFiltro.de = inicio;
+  if(!relFiltro.ate) relFiltro.ate = hoje;
+  var mesesOpc = relMeses(inicio < monthKeyAdd(hoje,-24) ? monthKeyAdd(hoje,-24) : inicio, hoje).map(function(mk){ return [mk, monthLabel(mk)]; });
+  var verComissao = podeVerFinanceiro();
+  var vendas = relVendasFiltradas();
+  var sit = relAgrupar(vendas, relSituacao);
+  var ativas = sit["Ativa"]||[], emImpl = sit["Em implantação"]||[], recusadas = sit["Recusada"]||[], desist = sit["Desistência"]||[];
+  var validas = ativas.concat(emImpl);
+  var valorValidas = relSoma(validas, relValorContrato);
+  var vidasValidas = relSoma(validas, function(l){ return l.quantidade_vidas; });
+  var trocas = relTrocasDePlano(vendas);
+  var perdidasNegociacao = state.leads.filter(function(l){
+    if(l.etapa!=="Perdido" || l.data_ganho) return false;
+    var mk = monthKeyFromISO(l.etapa_atualizada_em || l.criado_em);
+    return (!relFiltro.de || mk>=relFiltro.de) && (!relFiltro.ate || mk<=relFiltro.ate) && (!relFiltro.vendedor || l.vendedor===relFiltro.vendedor) && (!relFiltro.produto || l.produto===relFiltro.produto);
+  });
+  var conversao = (vendas.length + perdidasNegociacao.length) ? vendas.length/(vendas.length+perdidasNegociacao.length) : 0;
+  var comParcelas = relSoma(validas, function(l){ var c = relComissao(l); return c.parcelas + c.bonus; });
+  var comVitalicio = relSoma(validas, function(l){ return relComissao(l).vitalicio; });
+  var meses = relMeses(relFiltro.de, relFiltro.ate);
+  var metaPeriodo = relSoma(meses, metaValorDoMes);
+
+  var header = '<div class="topbar"><div><h1>Relatórios de vendas</h1><div class="desc">Vendas fechadas no funil desde '+monthLabel(inicio)+' · situação, valores'+(verComissao? ' e previsão de comissão' : '')+'</div></div>'+
+    '<div class="rowflex"><button class="btn btn-ghost" id="rel-voltar-funil">← Funil</button><button class="btn btn-primary" id="rel-exportar">Exportar Excel</button></div></div>';
+  var filtros = '<div class="funil-filterbar">'+
+    relSelect("rel-de","De", mesesOpc, relFiltro.de, "Início")+
+    relSelect("rel-ate","Até", mesesOpc, relFiltro.ate, "Hoje")+
+    relSelect("rel-vendedor","Vendedor(a)", VENDEDORES.concat(Object.keys(relAgrupar(relVendasTodas(), function(l){ return l.vendedor; })).filter(function(v){ return v!=="—" && VENDEDORES.indexOf(v)<0; })), relFiltro.vendedor)+
+    relSelect("rel-produto","Produto", PRODUTOS, relFiltro.produto)+
+    relSelect("rel-operadora","Operadora", Object.keys(relAgrupar(relVendasTodas(), function(l){ return l.operadora; })).sort(), relFiltro.operadora, "Todas")+
+    relSelect("rel-situacao","Situação", REL_SITUACOES, relFiltro.situacao, "Todas")+
+    ((relFiltro.vendedor||relFiltro.produto||relFiltro.operadora||relFiltro.situacao||relFiltro.de!==inicio||relFiltro.ate!==hoje)? '<button class="linklike" id="rel-limpar" style="padding-bottom:9px;">limpar</button>' : '')+
+  '</div>';
+
+  var tiles = '<div class="tiles">'+
+    tile("Vendas fechadas", vendas.length, fmtMoney(relSoma(vendas, relValorContrato))+" em contratos mensais")+
+    tile("Ativas", ativas.length, fmtMoney(relSoma(ativas, relValorContrato))+"/mês")+
+    tile("Em implantação", emImpl.length, fmtMoney(relSoma(emImpl, relValorContrato))+"/mês")+
+    tile("Recusadas pela operadora", recusadas.length, fmtMoney(relSoma(recusadas, relValorContrato))+(trocas.recusasRevertidas? " · "+trocas.recusasRevertidas+" revertida(s) com troca de plano" : ""))+
+    tile("Desistências após fechar", desist.length, fmtMoney(relSoma(desist, relValorContrato)))+
+    tile("Vendido (ativas + implantação)", fmtMoney(valorValidas), (metaPeriodo? fmtPct(valorValidas/metaPeriodo)+" da meta de "+fmtMoney(metaPeriodo) : "sem meta no período")+(vidasValidas? " · "+vidasValidas+" vidas" : ""))+
+    tile("Ticket médio", fmtMoney(validas.length? valorValidas/validas.length : 0), "por contrato")+
+    tile("Conversão", fmtPct(conversao), vendas.length+" ganhos × "+perdidasNegociacao.length+" perdidos na negociação")+
+    (verComissao?
+      tile("Comissão das vendas (parcelas)", fmtMoney(comParcelas), "líquido · "+(state.params.parcelas_cheias||3)+" parcelas por contrato")+
+      tile("Vitalício gerado", fmtMoney(comVitalicio)+"/mês", "recorrente, líquido") : '')+
+  '</div>';
+
+  /* resumo por mês */
+  var linhasMes = meses.map(function(mk){
+    var vm = vendas.filter(function(l){ return monthKeyFromISO(l.data_ganho)===mk; });
+    var g = relAgrupar(vm, relSituacao);
+    var val = relSoma((g["Ativa"]||[]).concat(g["Em implantação"]||[]), relValorContrato);
+    var meta = metaValorDoMes(mk);
+    var com = relSoma((g["Ativa"]||[]).concat(g["Em implantação"]||[]), function(l){ var c = relComissao(l); return c.parcelas + c.bonus; });
+    return {mk:mk, n:vm.length, ativas:(g["Ativa"]||[]).length, impl:(g["Em implantação"]||[]).length, rec:(g["Recusada"]||[]).length, des:(g["Desistência"]||[]).length,
+      valor:val, perdido: relSoma((g["Recusada"]||[]).concat(g["Desistência"]||[]), relValorContrato), meta:meta, com:com};
+  });
+  var tabelaMes = '<div class="card"><div class="card-head"><h2>Resumo por mês</h2><div class="meta">pelo mês em que o negócio foi ganho</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+    '<th>Mês</th><th class="num">Fechadas</th><th class="num">Ativas</th><th class="num">Em implantação</th><th class="num">Recusadas</th><th class="num">Desistências</th><th class="num">Valor vendido</th><th class="num">Meta</th><th>Meta atingida</th><th class="num">Valor perdido</th>'+(verComissao? '<th class="num">Comissão (parcelas)</th>' : '')+
+    '</tr></thead><tbody>'+
+    linhasMes.map(function(r){
+      var pct = r.meta ? r.valor/r.meta : 0;
+      return '<tr><td>'+monthLabel(r.mk)+(r.mk===hoje?' <span class="tag">atual</span>':'')+'</td><td class="num">'+r.n+'</td><td class="num">'+r.ativas+'</td><td class="num">'+r.impl+'</td><td class="num">'+r.rec+'</td><td class="num">'+r.des+'</td>'+
+        '<td class="num" style="white-space:nowrap;"><b>'+fmtMoney(r.valor)+'</b></td><td class="num" style="white-space:nowrap;">'+(r.meta? fmtMoney(r.meta) : '—')+'</td>'+
+        '<td style="min-width:120px;">'+(r.meta? '<div style="display:flex;align-items:center;gap:6px;"><div style="flex:1;height:6px;border-radius:4px;background:var(--line);overflow:hidden;"><div style="height:100%;width:'+Math.min(100,Math.round(pct*100))+'%;background:'+(pct>=1?'var(--success)':'var(--navy)')+';"></div></div><span style="font-size:12px;">'+fmtPct(pct)+'</span></div>' : '<span class="muted">—</span>')+'</td>'+
+        '<td class="num">'+(r.perdido? fmtMoney(r.perdido) : '—')+'</td>'+(verComissao? '<td class="num">'+fmtMoney(r.com)+'</td>' : '')+'</tr>';
+    }).join("")+
+    '</tbody></table></div></div></div>';
+
+  /* por vendedor e por operadora */
+  function tabelaGrupo(titulo, grupos){
+    var chaves = Object.keys(grupos).sort(function(a,b){ return relSoma(grupos[b], relValorContrato) - relSoma(grupos[a], relValorContrato); });
+    return '<div class="card"><div class="card-head"><h2>'+titulo+'</h2></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr><th>'+(titulo.indexOf("vendedor")>=0?"Vendedor(a)":"Operadora")+'</th><th class="num">Fechadas</th><th class="num">Ativas</th><th class="num">Em implantação</th><th class="num">Recusadas / desist.</th><th class="num">Valor vendido</th>'+(verComissao? '<th class="num">Comissão (parcelas)</th><th class="num">Vitalício/mês</th>' : '')+'</tr></thead><tbody>'+
+      chaves.map(function(k){
+        var arr = grupos[k], g = relAgrupar(arr, relSituacao), val = (g["Ativa"]||[]).concat(g["Em implantação"]||[]);
+        return '<tr><td>'+escapeHtml(k)+'</td><td class="num">'+arr.length+'</td><td class="num">'+(g["Ativa"]||[]).length+'</td><td class="num">'+(g["Em implantação"]||[]).length+'</td><td class="num">'+((g["Recusada"]||[]).length+(g["Desistência"]||[]).length)+'</td><td class="num"><b>'+fmtMoney(relSoma(val, relValorContrato))+'</b></td>'+
+          (verComissao? '<td class="num">'+fmtMoney(relSoma(val, function(l){ var c=relComissao(l); return c.parcelas+c.bonus; }))+'</td><td class="num">'+fmtMoney(relSoma(val, function(l){ return relComissao(l).vitalicio; }))+'</td>' : '')+'</tr>';
+      }).join("")+
+      '</tbody></table></div></div></div>';
+  }
+  var grupos = vendas.length ? '<div>'+tabelaGrupo("Por vendedor(a)", relAgrupar(vendas, function(l){ return l.vendedor; }))+tabelaGrupo("Por operadora", relAgrupar(vendas, function(l){ return l.operadora; }))+'</div>' : '';
+
+  /* contratos */
+  var tabelaContratos = '<div class="card"><div class="card-head"><h2>Contratos ('+vendas.length+')</h2><div class="meta">clique para abrir o negócio</div></div><div class="card-body">'+
+    (vendas.length? '<div class="tablewrap"><table class="grid"><thead><tr>'+
+      '<th>Cliente / empresa</th><th>Situação</th><th>Vendedor(a)</th><th>Operadora / plano</th><th class="num">Vidas</th><th class="num">Valor mensal</th><th>Ganho em</th><th>Vigência</th>'+(verComissao? '<th class="num">Comissão (parcelas)</th><th class="num">Vitalício/mês</th>' : '')+'<th>Obs.</th>'+
+      '</tr></thead><tbody>'+
+      vendas.map(function(l){
+        var s = relSituacao(l), h = historicoPlanoDe(l.id), c = relComissao(l);
+        var obs = [];
+        if(h.length){ var ult = h[h.length-1]; obs.push('troca de plano ('+escapeHtml(ult.motivo||"")+'): '+escapeHtml((ult.de&&ult.de.operadora)||"—")+' → '+escapeHtml((ult.para&&ult.para.operadora)||"—")); }
+        if(l.etapa==="Perdido" && l.motivo_perda) obs.push(escapeHtml(l.motivo_perda));
+        return '<tr class="rowlink" data-rel-open-lead="'+l.id+'" style="cursor:pointer;">'+
+          '<td><b>'+escapeHtml(l.empresa||l.nome||"—")+'</b>'+(l.empresa && l.nome? '<div class="muted" style="font-size:12px;">'+escapeHtml(l.nome)+'</div>' : '')+'</td>'+
+          '<td>'+relSituacaoPill(s)+'</td><td>'+escapeHtml(l.vendedor||"—")+'</td>'+
+          '<td>'+escapeHtml(l.operadora||"—")+(l.categoria_plano? '<div class="muted" style="font-size:12px;">'+escapeHtml(l.categoria_plano)+'</div>' : '')+'</td>'+
+          '<td class="num">'+(l.quantidade_vidas||"—")+'</td><td class="num"><b>'+fmtMoney(relValorContrato(l))+'</b></td>'+
+          '<td style="white-space:nowrap;">'+fmtDateISO(l.data_ganho)+'</td><td style="white-space:nowrap;">'+(l.vigencia_inicio? fmtDateISO(l.vigencia_inicio) : '—')+'</td>'+
+          (verComissao? (s==="Ativa"||s==="Em implantação"? '<td class="num">'+fmtMoney(c.parcelas+c.bonus)+'</td><td class="num">'+fmtMoney(c.vitalicio)+'</td>' : '<td class="num muted">—</td><td class="num muted">—</td>') : '')+
+          '<td style="font-size:12px;max-width:260px;">'+(obs.join(" · ")||'<span class="muted">—</span>')+'</td></tr>';
+      }).join("")+
+      '</tbody></table></div>' : '<div class="empty">Nenhuma venda com esses filtros.</div>')+
+  '</div></div>';
+
+  /* previsibilidade de comissão */
+  var previsao = '';
+  if(verComissao){
+    var metaFat = state.params.meta_mensal_padrao||0;
+    var prox = []; for(var i=0;i<12;i++){ prox.push(monthKeyAdd(hoje,i)); }
+    var linhas = prox.map(function(mk){ return {mk:mk, p:relPrevisaoMes(mk)}; });
+    previsao = '<div class="card"><div class="card-head"><h2>Previsibilidade de comissionamento — próximos 12 meses</h2><div class="meta">líquido de '+fmtPct(state.params.taxa_imposto||0)+' de imposto · carteira + vendas em implantação</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+      '<th>Mês</th><th class="num">Carteira (clientes)</th><th class="num">Vendas em implantação</th><th class="num">Total previsto</th>'+(metaFat? '<th class="num">Meta de faturamento</th><th class="num">Diferença</th>' : '')+
+      '</tr></thead><tbody>'+
+      linhas.map(function(r){
+        var diff = r.p.total - metaFat;
+        return '<tr><td>'+monthLabel(r.mk)+(r.mk===hoje?' <span class="tag">atual</span>':'')+'</td><td class="num">'+fmtMoney(r.p.carteira)+'</td><td class="num">'+fmtMoney(r.p.novas)+'</td><td class="num"><b>'+fmtMoney(r.p.total)+'</b></td>'+
+          (metaFat? '<td class="num">'+fmtMoney(metaFat)+'</td><td class="num" style="color:'+(diff<0?'var(--danger)':'var(--success)')+'">'+fmtMoney(diff)+'</td>' : '')+'</tr>';
+      }).join("")+
+      '<tr><td><b>Total 12 meses</b></td><td class="num">'+fmtMoney(relSoma(linhas,function(r){return r.p.carteira;}))+'</td><td class="num">'+fmtMoney(relSoma(linhas,function(r){return r.p.novas;}))+'</td><td class="num"><b>'+fmtMoney(relSoma(linhas,function(r){return r.p.total;}))+'</b></td>'+(metaFat? '<td class="num">'+fmtMoney(metaFat*12)+'</td><td></td>' : '')+'</tr>'+
+      '</tbody></table></div><div class="muted" style="font-size:12px;margin-top:8px;">Vendas em implantação entram com '+(state.params.parcelas_cheias||3)+' parcelas cheias a partir do mês de início da vigência (ou do mês do ganho, se a vigência ainda não foi preenchida) e depois o vitalício de '+fmtPct(state.params.percentual_vitalicio||0)+'. Recusadas e desistências não entram. Ao virar cliente, o cálculo passa a usar o cadastro do cliente.</div></div></div>';
+  }
+  return header + filtros + tiles + tabelaMes + previsao + grupos + tabelaContratos;
+}
+function exportarRelatoriosExcel(){
+  var vendas = relVendasFiltradas(), verComissao = podeVerFinanceiro();
+  var wb = XLSX.utils.book_new();
+  var cabC = ["Cliente / empresa","Contato","Situação","Vendedor(a)","Produto","Operadora","Plano","Vidas","Valor mensal (R$)","Ganho em","Início vigência","Motivo (recusa/desistência)","Trocas de plano"];
+  if(verComissao) cabC = cabC.concat(["Comissão parcelas (R$, líquido)","Vitalício/mês (R$, líquido)"]);
+  var linhasC = vendas.map(function(l){
+    var s = relSituacao(l), c = relComissao(l), h = historicoPlanoDe(l.id);
+    var row = [l.empresa||l.nome||"", l.empresa? (l.nome||"") : "", s, l.vendedor||"", l.produto||"", l.operadora||"", l.categoria_plano||"", l.quantidade_vidas||"", Math.round(relValorContrato(l)*100)/100,
+      l.data_ganho? fmtDateISO(l.data_ganho) : "", l.vigencia_inicio? fmtDateISO(l.vigencia_inicio) : "", l.etapa==="Perdido"? (l.motivo_perda||"") : "",
+      h.map(function(x){ return (x.motivo||"")+": "+((x.de&&x.de.operadora)||"—")+" → "+((x.para&&x.para.operadora)||"—"); }).join(" | ")];
+    if(verComissao){ var ok = s==="Ativa"||s==="Em implantação"; row.push(ok? Math.round((c.parcelas+c.bonus)*100)/100 : 0, ok? Math.round(c.vitalicio*100)/100 : 0); }
+    return row;
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cabC].concat(linhasC)), "Contratos");
+  var meses = relMeses(relFiltro.de || relPrimeiroMes(), relFiltro.ate || todayMonthKey());
+  var cabM = ["Mês","Fechadas","Ativas","Em implantação","Recusadas","Desistências","Valor vendido (R$)","Meta (R$)","% meta","Valor perdido (R$)"];
+  if(verComissao) cabM.push("Comissão parcelas (R$)");
+  var linhasM = meses.map(function(mk){
+    var vm = vendas.filter(function(l){ return monthKeyFromISO(l.data_ganho)===mk; }), g = relAgrupar(vm, relSituacao);
+    var val = (g["Ativa"]||[]).concat(g["Em implantação"]||[]), v = relSoma(val, relValorContrato), meta = metaValorDoMes(mk);
+    var row = [monthLabel(mk), vm.length, (g["Ativa"]||[]).length, (g["Em implantação"]||[]).length, (g["Recusada"]||[]).length, (g["Desistência"]||[]).length, Math.round(v*100)/100, meta, meta? Math.round(v/meta*1000)/10+"%" : "", Math.round(relSoma((g["Recusada"]||[]).concat(g["Desistência"]||[]), relValorContrato)*100)/100];
+    if(verComissao) row.push(Math.round(relSoma(val, function(l){ var c=relComissao(l); return c.parcelas+c.bonus; })*100)/100);
+    return row;
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([cabM].concat(linhasM)), "Resumo por mês");
+  if(verComissao){
+    var hoje = todayMonthKey(), linhasP = [];
+    for(var i=0;i<12;i++){ var mk = monthKeyAdd(hoje,i), p = relPrevisaoMes(mk); linhasP.push([monthLabel(mk), Math.round(p.carteira*100)/100, Math.round(p.novas*100)/100, Math.round(p.total*100)/100, state.params.meta_mensal_padrao||0]); }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Mês","Carteira (R$)","Vendas em implantação (R$)","Total previsto (R$)","Meta de faturamento (R$)"]].concat(linhasP)), "Previsão de comissão");
+  }
+  XLSX.writeFile(wb, "relatorio-vendas-oneplus-"+todayISO()+".xlsx");
+}
+function wireRelatorios(){
+  if(state.tab!=="relatorios") return;
+  [["rel-de","de"],["rel-ate","ate"],["rel-vendedor","vendedor"],["rel-produto","produto"],["rel-operadora","operadora"],["rel-situacao","situacao"]].forEach(function(p){
+    var el = document.getElementById(p[0]); if(el) el.onchange = function(){ relFiltro[p[1]] = el.value; render(); };
+  });
+  var limpar = document.getElementById("rel-limpar"); if(limpar) limpar.onclick = function(){ relFiltro = {de:"", ate:"", vendedor:"", produto:"", operadora:"", situacao:""}; render(); };
+  var exp = document.getElementById("rel-exportar"); if(exp) exp.onclick = exportarRelatoriosExcel;
+  var voltar = document.getElementById("rel-voltar-funil"); if(voltar) voltar.onclick = function(){ state.tab = "funil"; render(); };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-rel-open-lead]"), function(tr){
+    tr.onclick = function(){ openLeadDetailPanel(tr.getAttribute("data-rel-open-lead")); };
+  });
+}
+
 /* ================= IMPLANTAÇÃO ================= */
 function clienteDoLead(leadId){ return state.clientes.filter(function(c){ return c.lead_id===leadId; })[0]; }
 function implantacaoDoLead(leadId){ return state.implantacoes.filter(function(i){ return i.lead_id===leadId; })[0]; }
@@ -2884,6 +3250,7 @@ function viewImplantacao(){
           '<div class="k-title">'+escapeHtml(l.nome||l.empresa||"—")+'</div>'+
           '<div class="muted">'+fmtMoney(l.valor_estimado)+' · '+escapeHtml(imp.responsavel||"—")+'</div>'+
           (operadoraTag(l)? '<div style="margin-top:4px;">'+operadoraTag(l)+'</div>' : '')+
+          (l.vigencia_inicio || historicoPlanoDe(l.id).length? '<div class="muted" style="margin-top:4px;font-size:12px;">'+(l.vigencia_inicio? 'vigência '+fmtDateISO(l.vigencia_inicio) : '')+(historicoPlanoDe(l.id).length? (l.vigencia_inicio?' · ':'')+'<span class="tag">plano trocado</span>' : '')+'</div>' : '')+
           (idx>=ESTAGIO_ONBOARD? '<div style="margin-top:4px;">'+(cli? '<span class="pill pill-ok">cadastro ok</span>' : '<span class="pill pill-warn">falta cadastro</span>')+'</div>' : '')+
           '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
             (idx===ESTAGIO_ONBOARD? '<button class="linklike" data-finalizar-implantacao="'+l.id+'">concluir</button>' : '')+
@@ -2903,7 +3270,7 @@ function viewImplantacao(){
 function openPreCadastroModal(lead){
   var imp = implantacaoDoLead(lead.id) || {};
   var draft = imp.pre_cadastro || null;
-  var seed = (draft && draft.data) || {produto: lead.produto, titular_nome: lead.nome, razao_social: lead.empresa, vendedor: lead.vendedor, valor_contrato_total: lead.valor_estimado, plano_nome: (lead.operadora||""), status:"Ativo", data_inclusao: todayISO()};
+  var seed = (draft && draft.data) || {produto: lead.produto, titular_nome: lead.nome, razao_social: lead.empresa, vendedor: lead.vendedor, valor_contrato_total: lead.valor_estimado, plano_nome: (planoNomeDoLead(lead)||""), vigencia_inicio: lead.vigencia_inicio||null, status:"Ativo", data_inclusao: todayISO()};
   var seedDeps = (draft && draft.deps) || [];
   openModal("Pré-cadastro (documentos) — "+(lead.nome||lead.empresa||"—"), clienteFormHtml(seed, seedDeps, {preCadastro:true}), function(closeFn){
     var parsed = readClienteForm();
@@ -2925,7 +3292,7 @@ function openImplantacaoModal(lead){
   var tarefas = tarefasDoLead(lead.id);
   var preCadastroPreenchido = !!(imp.pre_cadastro && imp.pre_cadastro.data && (imp.pre_cadastro.data.titular_nome || imp.pre_cadastro.data.razao_social));
   var body =
-    (operadoraTag(lead)? '<div style="margin-bottom:10px;">'+operadoraTag(lead)+'</div>' : '')+
+    planoContratadoHtml(lead)+
     '<div class="helpbox">'+(
       cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' :
       '📋 '+(preCadastroPreenchido? 'Pré-cadastro preenchido (RG, CPF, dependentes, plano...).' : 'Pré-cadastro ainda vazio — preencha assim que os documentos chegarem.')+
@@ -2962,12 +3329,14 @@ function openImplantacaoModal(lead){
     closeFn();
   }, "Salvar");
 
+  var trocarPlanoBtn = document.getElementById("im-trocar-plano");
+  if(trocarPlanoBtn) trocarPlanoBtn.onclick = function(){ openTrocaPlanoModal(lead); };
   var preCadastroBtn = document.getElementById("im-pre-cadastro");
   if(preCadastroBtn) preCadastroBtn.onclick = function(){ openPreCadastroModal(lead); };
   var tornarClienteBtn = document.getElementById("im-tornar-cliente");
   if(tornarClienteBtn) tornarClienteBtn.onclick = function(){
     var draft = imp.pre_cadastro;
-    var seed = (draft && draft.data) || {titular_nome:lead.nome, razao_social:lead.empresa, produto:lead.produto, plano_nome:(lead.operadora||""), vendedor:lead.vendedor, valor_contrato_total:lead.valor_estimado, status:"Ativo"};
+    var seed = (draft && draft.data) || {titular_nome:lead.nome, razao_social:lead.empresa, produto:lead.produto, plano_nome:(planoNomeDoLead(lead)||""), vigencia_inicio: lead.vigencia_inicio||null, vendedor:lead.vendedor, valor_contrato_total:lead.valor_estimado, status:"Ativo"};
     seed.lead_id = lead.id;
     if(!seed.data_fechamento) seed.data_fechamento = lead.data_ganho||todayISO();
     if(!seed.data_inclusao) seed.data_inclusao = todayISO();
@@ -3001,7 +3370,7 @@ function finalizarImplantacao(leadId){
     if(!l) return;
     var imp0 = implantacaoDoLead(leadId);
     var draft = imp0 && imp0.pre_cadastro;
-    var seed = (draft && draft.data) || {titular_nome:l.nome, razao_social:l.empresa, produto:l.produto, plano_nome:(l.operadora||""), vendedor:l.vendedor, valor_contrato_total:l.valor_estimado, status:"Ativo"};
+    var seed = (draft && draft.data) || {titular_nome:l.nome, razao_social:l.empresa, produto:l.produto, plano_nome:(planoNomeDoLead(l)||""), vigencia_inicio: l.vigencia_inicio||null, vendedor:l.vendedor, valor_contrato_total:l.valor_estimado, status:"Ativo"};
     seed.lead_id = leadId;
     if(!seed.data_fechamento) seed.data_fechamento = l.data_ganho||todayISO();
     if(!seed.data_inclusao) seed.data_inclusao = todayISO();
@@ -3433,6 +3802,8 @@ function viewParametros(){
 function wireActions(){
   wireMoneyInputs(document);
   wireEmpresas();
+  wireRelatorios();
+  var btnRel = document.getElementById("btn-relatorios"); if(btnRel) btnRel.onclick = function(){ state.tab = "relatorios"; render(); window.scrollTo(0,0); };
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-hist-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-hist-cliente");})[0]; if(c) openHistoricoModal(c); }; });
