@@ -567,3 +567,10 @@ fieldset legend { padding: 0 6px; font-size: 11px; font-weight: 700; letter-spac
   .main { padding: 20px 16px 56px; }
   .topbar h1 { font-size: 24px; line-height: 30px; }
 }
+
+/* Tabela do contrato & upgrade */
+table.grid tr.op-linha-atual td { background: var(--vital-bg); font-weight: 700; }
+.op-colar-tabela textarea { background: var(--surface-2); }
+.op-upgrade { border-color: var(--accent-blue); }
+#histmodal-wrap table.grid td:first-child, #histmodal-wrap table.grid th:first-child { white-space: nowrap; }
+#histmodal-wrap table.grid td.num { white-space: nowrap; }

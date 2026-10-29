@@ -725,7 +725,7 @@ function viewClientes(){
         '<div class="info-item"><span class="k">Revisão</span><span>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</span></div>'+
       '</div>'+
       '<div class="client-card-foot">'+
-        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">histórico</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
+        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">tabela & upgrade</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
       '</div>'+
     '</div>';
   }).join("")+'</div>');
@@ -1529,7 +1529,9 @@ async function importarClientesExcel(file){
                           mudanças de faixa) a qualquer momento. */
   
   function tabelasDoCliente(clienteId){
-      return state.tabelas_precos_cliente.filter(function(t){ return t.cliente_id===clienteId; })
+      var cli = state.clientes.filter(function(c){ return c.id===clienteId; })[0];
+      var leadId = cli && cli.lead_id;
+      return state.tabelas_precos_cliente.filter(function(t){ return t.cliente_id===clienteId || (leadId && !t.cliente_id && t.lead_id===leadId); })
         .sort(function(a,b){ return b.ano_vigencia-a.ano_vigencia; });
   }
   function tabelaAtualDoCliente(clienteId){
@@ -1580,7 +1582,7 @@ async function importarClientesExcel(file){
      — ou criar a tabela do ano, se ainda não existir. */
   function novaCategoriaFormHtml(tabelaAtual){
       var ano = tabelaAtual ? tabelaAtual.ano_vigencia : new Date().getFullYear();
-      return '<fieldset><legend>Adicionar categoria à tabela</legend>'+
+      return '<fieldset><legend>Adicionar uma categoria manualmente</legend>'+
             '<div class="field row3">'+
               '<div class="field"><label>Ano de vigência</label><input type="number" id="ntc-ano" value="'+ano+'"></div>'+
               '<div class="field"><label>Operadora</label><select id="ntc-operadora">'+OPERADORAS.map(function(o){return '<option'+(tabelaAtual&&tabelaAtual.operadora===o?' selected':'')+'>'+o+'</option>';}).join("")+'</select></div>'+
@@ -1610,6 +1612,133 @@ async function importarClientesExcel(file){
             '<div class="rowflex"><button type="button" class="btn btn-primary" id="btn-aplicar-reajuste-cliente"'+(tabelaAtual?'':' disabled')+'>Aplicar reajuste e gerar tabela '+proximoAno+'</button></div>'+
           '</fieldset>';
   }
+
+  /* ===== Colar a tabela inteira da cotação (todas as categorias de uma vez) ===== */
+  var FAIXA_RE = /\b(0|19|24|29|34|39|44|49|54)\s*(?:a|à|-|–|até)\s*(18|23|28|33|38|43|48|53|58)\b(?:\s*anos)?|\b59\s*(?:anos)?\s*(?:ou\s*\+|\+|ou\s*mais|em\s*diante)/gi;
+  function faixaLabelPorIdadeInicial(n){
+      for(var i=0;i<ANS_BANDS.length;i++){ if(n<=ANS_BANDS[i].max) return ANS_BANDS[i].label; }
+      return ANS_BANDS[ANS_BANDS.length-1].label;
+  }
+  function numeroBR(tok){
+      tok = String(tok).replace(/R\$|\s/g,"");
+      if(!/\d/.test(tok)) return null;
+      if(/,\d{1,2}$/.test(tok)) tok = tok.replace(/\./g,"").replace(",",".");
+      else if(/^\d{1,3}(\.\d{3})+$/.test(tok)) tok = tok.replace(/\./g,"");
+      var v = parseFloat(tok);
+      return isNaN(v) ? null : v;
+  }
+  function lerTabelaColada(texto){
+      texto = String(texto||"").replace(/ /g," ");
+      var marcas = [], m;
+      FAIXA_RE.lastIndex = 0;
+      while((m = FAIXA_RE.exec(texto))){ marcas.push({ini:m.index, fim:m.index+m[0].length, idade: m[1]!==undefined ? parseInt(m[1],10) : 59}); }
+      if(!marcas.length) return {erro:"Não encontrei as faixas etárias (0 a 18, 19 a 23… 59 ou +). Copie a tabela inteira, incluindo a coluna das idades."};
+      var linhas = {};
+      marcas.forEach(function(mk, i){
+          var trecho = texto.slice(mk.fim, i+1<marcas.length ? marcas[i+1].ini : texto.length);
+          var nums = (trecho.match(/R?\$?\s*\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2})?/g) || []).map(numeroBR).filter(function(v){ return v!==null; });
+          linhas[faixaLabelPorIdadeInicial(mk.idade)] = nums;
+      });
+      var tamanhos = {}; Object.keys(linhas).forEach(function(k){ var n=linhas[k].length; tamanhos[n]=(tamanhos[n]||0)+1; });
+      var n = parseInt(Object.keys(tamanhos).sort(function(a,b){ return tamanhos[b]-tamanhos[a]; })[0],10);
+      if(!n) return {erro:"Encontrei as faixas, mas nenhum valor em reais ao lado delas."};
+      /* nomes das colunas: tenta ler o cabeçalho (antes da 1ª faixa) */
+      var cab = texto.slice(0, marcas[0].ini);
+      var linhasCab = cab.split(/\r?\n/).map(function(x){ return x.trim(); }).filter(Boolean);
+      var nomes = null;
+      var comTab = linhasCab.map(function(l){ return l.split(/\t+/).map(function(x){return x.trim();}).filter(Boolean); }).map(function(a){ return a.length===n+1 ? a.slice(1) : a; }).filter(function(a){ return a.length===n; });
+      if(comTab.length){ nomes = comTab[0].map(function(_,i){ return comTab.map(function(r){ return r[i]; }).join(" "); }); }
+      else if(linhasCab.length>=n){
+          var ult = linhasCab.slice(-n);
+          var ult2 = linhasCab.slice(-2*n);
+          var acomod = /^(enf|enfermaria|quarto|apto|apartamento)$/i;
+          if(linhasCab.length>=2*n && ult2.filter(function(x,i){ return i%2===1 && acomod.test(x); }).length===n){
+              nomes = []; for(var i=0;i<2*n;i+=2) nomes.push(ult2[i]+" "+ult2[i+1]);
+          } else nomes = ult;
+      }
+      if(!nomes){ nomes = []; for(var j=0;j<n;j++) nomes.push("Categoria "+(j+1)); }
+      var titulo = linhasCab.length && !comTab.length && linhasCab.length<n ? linhasCab.join(" · ") : (linhasCab.length>n*2 ? linhasCab.slice(0, linhasCab.length-(nomes.length*(linhasCab.length>=2*n?2:1))).join(" · ") : "");
+      return {colunas:n, nomes:nomes, linhas:linhas, titulo:titulo};
+  }
+  function colarTabelaFormHtml(tabelaAtual){
+      var ano = tabelaAtual ? tabelaAtual.ano_vigencia : new Date().getFullYear();
+      return '<fieldset class="op-colar-tabela"><legend>Cadastrar a tabela comercializada (colar)</legend>'+
+            '<div class="muted" style="font-size:13px;margin-bottom:10px;">Copie a tabela inteira da cotação (todas as categorias e faixas, como foi vendida) e cole abaixo. O sistema separa as categorias sozinho — você confere os nomes antes de salvar.</div>'+
+            '<div class="field row3">'+
+              '<div class="field"><label>Ano de vigência</label><input type="number" id="ct-ano" value="'+ano+'"></div>'+
+              '<div class="field"><label>Operadora</label><select id="ct-operadora">'+OPERADORAS.map(function(o){return '<option'+(tabelaAtual&&tabelaAtual.operadora===o?' selected':'')+'>'+o+'</option>';}).join("")+'</select></div>'+
+              '<div class="field"><label>Descrição da tabela</label><input id="ct-desc" value="'+escapeHtml(tabelaAtual&&tabelaAtual.observacoes||"")+'" placeholder="ex: Linha Amil · 2 a 2 vidas · Coparticipação parcial · MEI"></div>'+
+            '</div>'+
+            '<div class="field"><label>Cole a tabela aqui</label><textarea id="ct-texto" style="min-height:140px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;" placeholder="0 a 18   177,10   214,37   237,95 …&#10;19 a 23   240,50   291,11 …&#10;…&#10;59 ou +   1.060,31 …"></textarea></div>'+
+            '<div class="rowflex"><button type="button" class="btn" id="btn-ler-tabela">Ler tabela</button></div>'+
+            '<div id="ct-preview"></div>'+
+          '</fieldset>';
+  }
+  function previewTabelaColadaHtml(lida){
+      if(lida.erro) return '<div class="helpbox" style="margin-top:12px;">'+escapeHtml(lida.erro)+'</div>';
+      var faltam = ANS_BANDS.filter(function(b){ return !lida.linhas[b.label]; }).map(function(b){ return b.label; });
+      return '<div style="margin-top:14px;">'+
+        '<div class="muted" style="font-size:12.5px;margin-bottom:8px;">'+lida.colunas+' categoria(s) encontradas'+(faltam.length? ' · faltando: '+faltam.join(", ") : ' · 10 faixas completas')+'. Ajuste os nomes das categorias se precisar (ex.: “Bronze SP Enf”).</div>'+
+        '<div class="tablewrap"><table class="grid"><thead><tr><th>Faixa etária</th>'+
+          lida.nomes.map(function(nm,i){ return '<th><input class="ct-nome" data-col="'+i+'" value="'+escapeHtml(nm)+'" style="min-width:120px;height:32px;font-size:12.5px;"></th>'; }).join("")+
+        '</tr></thead><tbody>'+
+          ANS_BANDS.map(function(b){
+            var row = lida.linhas[b.label]||[];
+            return '<tr><td>'+b.label+'</td>'+lida.nomes.map(function(_,i){ return '<td class="num">'+(row[i]==null?'—':fmtMoney(row[i]))+'</td>'; }).join("")+'</tr>';
+          }).join("")+
+        '</tbody></table></div>'+
+        '<div class="rowflex" style="margin-top:10px;"><button type="button" class="btn btn-primary btn-seta" id="btn-salvar-tabela-colada">Salvar '+lida.colunas+' categorias na tabela do cliente</button></div>'+
+      '</div>';
+  }
+
+  /* ===== Simulador de upgrade: quanto ficaria em cada categoria da tabela do contrato ===== */
+  function simulacaoUpgrade(cliente, tabela){
+      var benefs = beneficiariosDoCliente(cliente).map(function(b){ var f = computeFaixa(b.data_nascimento); return {nome:b.nome, tipo:b.tipo, faixa: f? f.label : null, categoria: b.categoria_contratada}; });
+      var comFaixa = benefs.filter(function(b){ return b.faixa; });
+      var atual = 0, atualOk = comFaixa.length>0;
+      comFaixa.forEach(function(b){ var v = b.categoria? valorNaTabela(tabela, b.categoria, b.faixa) : null; if(v==null) atualOk=false; else atual+=v; });
+      var cats = categoriasDaTabela(tabela).map(function(cat){
+          var total=0, ok=true;
+          comFaixa.forEach(function(b){ var v = valorNaTabela(tabela, cat, b.faixa); if(v==null) ok=false; else total+=v; });
+          return {categoria:cat, total:total, completo:ok};
+      }).sort(function(a,b){ return a.total-b.total; });
+      return {benefs:benefs, semFaixa: benefs.length-comFaixa.length, atual: atualOk? atual : null, categorias:cats, catTitular: cliente.categoria_contratada||null};
+  }
+  function upgradeHtml(cliente, tabela){
+      if(!tabela || !categoriasDaTabela(tabela).length) return '';
+      var sim = simulacaoUpgrade(cliente, tabela);
+      if(sim.benefs.length===sim.semFaixa) return '<fieldset><legend>Simular upgrade</legend><div class="empty">Cadastre a data de nascimento do titular e dos dependentes para simular os valores em outras categorias.</div></fieldset>';
+      return '<fieldset class="op-upgrade"><legend>Simular upgrade — tabela do contrato '+tabela.ano_vigencia+'</legend>'+
+        '<div class="muted" style="font-size:13px;margin-bottom:10px;">Valores pela tabela que foi comercializada para este cliente (já com os reajustes registrados), somando titular e dependentes pelas faixas etárias de hoje'+(sim.semFaixa? ' · '+sim.semFaixa+' beneficiário(s) sem data de nascimento ficaram de fora' : '')+'.</div>'+
+        '<div class="tablewrap"><table class="grid"><thead><tr><th>Categoria</th><th class="num">Mensalidade total</th><th class="num">Diferença por mês</th><th class="num">Diferença</th></tr></thead><tbody>'+
+          sim.categorias.map(function(c){
+            var ehAtual = sim.catTitular===c.categoria;
+            var dif = (sim.atual!=null) ? c.total - sim.atual : null;
+            var pct = (sim.atual) ? (dif/sim.atual*100) : null;
+            return '<tr'+(ehAtual?' class="op-linha-atual"':'')+'><td>'+escapeHtml(c.categoria)+(ehAtual?' <span class="pill pill-vital">Atual</span>':'')+(c.completo?'':' <span class="muted" style="font-size:12px;">(faixa sem valor)</span>')+'</td>'+
+              '<td class="num"><b>'+fmtMoney(c.total)+'</b></td>'+
+              '<td class="num">'+(dif==null||ehAtual? '—' : (dif>0?'+ ':dif<0?'− ':'')+fmtMoney(Math.abs(dif)))+'</td>'+
+              '<td class="num">'+(pct==null||ehAtual? '—' : (pct>0?'+':'')+pct.toFixed(1).replace(".",",")+'%')+'</td></tr>';
+          }).join("")+
+        '</tbody></table></div>'+
+        '<div class="rowflex" style="margin-top:10px;"><button type="button" class="btn btn-concierge" id="btn-copiar-upgrade">Copiar simulação para o WhatsApp</button></div>'+
+      '</fieldset>';
+  }
+  function textoUpgrade(cliente, tabela){
+      var sim = simulacaoUpgrade(cliente, tabela);
+      var nome = (clienteLabel(cliente)||"").split(" ")[0];
+      var linhas = ["Olá, "+nome+"! Fiz a simulação de upgrade do seu plano pela tabela do seu contrato ("+(tabela.operadora||"")+" · vigência "+tabela.ano_vigencia+"), já somando todas as vidas:",""];
+      if(sim.atual!=null && sim.catTitular) linhas.push("• Hoje — "+sim.catTitular+": "+fmtMoney(sim.atual)+"/mês");
+      sim.categorias.forEach(function(c){
+        if(c.categoria===sim.catTitular) return;
+        if(sim.atual!=null && c.total<=sim.atual) return;
+        var dif = sim.atual!=null ? " (+"+fmtMoney(c.total-sim.atual)+")" : "";
+        linhas.push("• "+c.categoria+": "+fmtMoney(c.total)+"/mês"+dif);
+      });
+      linhas.push("","Quer que eu te explique as diferenças de rede e cobertura de cada opção? — One Plus");
+      return linhas.join("\n");
+  }
+
   function historicoModalBodyHtml(cliente){
       var tabelas = tabelasDoCliente(cliente.id);
       var atual = tabelas[0] || null;
@@ -1631,9 +1760,12 @@ async function importarClientesExcel(file){
             '</tbody></table></div>'+
             '<div class="rowflex" style="margin-top:8px;"><button type="button" class="btn btn-ghost" id="btn-salvar-categorias-benef">Salvar categorias dos beneficiários</button></div>'+
             '</fieldset>'+
-            '<fieldset><legend>Tabela vigente'+(atual? ' — '+atual.ano_vigencia+(atual.operadora?' · '+escapeHtml(atual.operadora):'') : '')+'</legend>'+
+            upgradeHtml(cliente, atual)+
+            '<fieldset><legend>Tabela comercializada'+(atual? ' — vigência '+atual.ano_vigencia+(atual.operadora?' · '+escapeHtml(atual.operadora):'') : '')+'</legend>'+
+            (atual && atual.observacoes? '<div class="muted" style="font-size:13px;margin-bottom:8px;">'+escapeHtml(atual.observacoes)+'</div>' : '')+
             tabelaGridHtml(atual)+
             '</fieldset>'+
+            colarTabelaFormHtml(atual)+
             novaCategoriaFormHtml(atual)+
             reajusteFormHtml(atual)+
             '<fieldset><legend>Histórico</legend>'+
@@ -1661,7 +1793,8 @@ async function importarClientesExcel(file){
       openModal("Carências — "+clienteLabel(cliente), info + carenciasTableHtml(rows), function(closeFn){ closeFn(); }, "Fechar");
   }
   function openHistoricoModal(cliente){
-      var close = openModal("Histórico de preços — "+clienteLabel(cliente), historicoModalBodyHtml(cliente), function(closeFn){ closeFn(); }, "Fechar");
+      var close = openModal("Tabela do contrato & upgrade — "+clienteLabel(cliente), historicoModalBodyHtml(cliente), function(closeFn){ closeFn(); }, "Fechar");
+      var mEl = document.querySelector(".modal"); if(mEl) mEl.style.maxWidth = "min(1180px, 96vw)";
       wireHistoricoModal(cliente, close);
   }
   function refreshHistoricoModalBody(cliente, closeFn){
@@ -1672,6 +1805,55 @@ async function importarClientesExcel(file){
       wireHistoricoModal(cliente, closeFn);
   }
   function wireHistoricoModal(cliente, closeFn){
+      var lida = null;
+      var btnLer = document.getElementById("btn-ler-tabela");
+      if(btnLer){
+            btnLer.onclick = function(){
+                    lida = lerTabelaColada(document.getElementById("ct-texto").value);
+                    var prev = document.getElementById("ct-preview");
+                    prev.innerHTML = previewTabelaColadaHtml(lida);
+                    if(lida.titulo && !document.getElementById("ct-desc").value) document.getElementById("ct-desc").value = lida.titulo;
+                    var txtLow = document.getElementById("ct-texto").value.toLowerCase();
+                    var opSel = document.getElementById("ct-operadora");
+                    var achou = OPERADORAS.filter(function(o){ return o!=="Outros" && txtLow.indexOf(o.toLowerCase())>=0; })[0];
+                    if(achou && opSel) opSel.value = achou;
+                    var bt = document.getElementById("btn-salvar-tabela-colada");
+                    if(bt) bt.onclick = async function(){
+                              var ano = parseInt(document.getElementById("ct-ano").value,10) || new Date().getFullYear();
+                              var operadora = document.getElementById("ct-operadora").value;
+                              var desc = document.getElementById("ct-desc").value.trim();
+                              var nomes = Array.prototype.map.call(document.querySelectorAll(".ct-nome"), function(i){ return i.value.trim(); });
+                              if(nomes.some(function(n){ return !n; })){ toast("Dê um nome para cada categoria."); return; }
+                              if(new Set(nomes).size!==nomes.length){ toast("Há categorias com o mesmo nome — ajuste para ficarem diferentes."); return; }
+                              var novas = {};
+                              nomes.forEach(function(nm, i){
+                                    novas[nm] = {};
+                                    ANS_BANDS.forEach(function(b){ var row = lida.linhas[b.label]; if(row && row[i]!=null) novas[nm][b.label] = row[i]; });
+                              });
+                              var existente = tabelasDoCliente(cliente.id).filter(function(t){ return t.ano_vigencia===ano; })[0];
+                              var r;
+                              if(existente){
+                                    var merged = {}; Object.keys(existente.tabela||{}).forEach(function(k){ merged[k]=existente.tabela[k]; });
+                                    Object.keys(novas).forEach(function(k){ merged[k]=novas[k]; });
+                                    r = await sb.from("tabelas_precos_cliente").update({tabela:merged, operadora:operadora, observacoes: desc||existente.observacoes||null, cliente_id: cliente.id}).eq("id", existente.id);
+                              } else {
+                                    r = await sb.from("tabelas_precos_cliente").insert({cliente_id:cliente.id, ano_vigencia:ano, operadora:operadora, tabela:novas, observacoes: desc||null, criado_por:currentUser()});
+                              }
+                              if(r.error){ console.error(r.error); toast("Erro ao salvar a tabela: "+r.error.message); return; }
+                              toast("Tabela "+ano+" salva com "+nomes.length+" categorias.");
+                              await reload("tabelas_precos_cliente");
+                              var fresh = state.clientes.filter(function(c){return c.id===cliente.id;})[0] || cliente;
+                              refreshHistoricoModalBody(fresh, closeFn);
+                    };
+            };
+      }
+      var btnCopiar = document.getElementById("btn-copiar-upgrade");
+      if(btnCopiar){
+            btnCopiar.onclick = function(){
+                    var t = textoUpgrade(cliente, tabelaAtualDoCliente(cliente.id));
+                    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function(){ toast("Simulação copiada — é só colar no WhatsApp."); }, function(){ window.prompt("Copie o texto:", t); });
+            };
+      }
       var btnSalvarCat = document.getElementById("btn-salvar-categoria");
       if(btnSalvarCat){
             btnSalvarCat.onclick = async function(){
@@ -1687,7 +1869,7 @@ async function importarClientesExcel(file){
                               if(!isNaN(v)){ valores[inp.getAttribute("data-faixa")] = v; algumPreenchido = true; }
                     });
                     if(!algumPreenchido){ toast("Informe ao menos um valor de faixa etária."); return; }
-                    var existente = state.tabelas_precos_cliente.filter(function(t){ return t.cliente_id===cliente.id && t.ano_vigencia===ano; })[0];
+                    var existente = tabelasDoCliente(cliente.id).filter(function(t){ return t.ano_vigencia===ano; })[0];
                     var r;
                     if(existente){
                               var novaTabela = {};
@@ -1737,7 +1919,7 @@ async function importarClientesExcel(file){
                     var data = document.getElementById("rj-data").value || todayISO();
                     var obs = document.getElementById("rj-obs").value.trim();
                     var novoAno = atual.ano_vigencia+1;
-                    var jaExiste = state.tabelas_precos_cliente.filter(function(t){ return t.cliente_id===cliente.id && t.ano_vigencia===novoAno; })[0];
+                    var jaExiste = tabelasDoCliente(cliente.id).filter(function(t){ return t.ano_vigencia===novoAno; })[0];
                     if(jaExiste){ toast("Já existe uma tabela cadastrada para "+novoAno+"."); return; }
                     var novaTabela = {};
                     Object.keys(atual.tabela||{}).forEach(function(cat){
@@ -3320,6 +3502,98 @@ function openPreCadastroModal(lead){
   wireClienteFormExtra();
   wireClienteFormDeps();
 }
+
+/* ===== Tabela comercializada já na IMPLANTAÇÃO (antes de virar cliente) ===== */
+function tabelasDoLead(leadId){
+  return state.tabelas_precos_cliente.filter(function(t){ return t.lead_id===leadId; })
+    .sort(function(a,b){ return b.ano_vigencia-a.ano_vigencia; });
+}
+function simulacaoPorIdadesHtml(tabela, idades){
+  var faixas = idades.map(function(i){ return faixaDaIdade(i); }).filter(Boolean);
+  if(!tabela || !categoriasDaTabela(tabela).length) return '';
+  if(!faixas.length) return '<fieldset><legend>Simular categorias</legend><div class="empty">Adicione as idades das vidas no negócio (Funil) para simular o valor total em cada categoria.</div></fieldset>';
+  var linhas = categoriasDaTabela(tabela).map(function(cat){
+    var total=0, ok=true; faixas.forEach(function(f){ var v = valorNaTabela(tabela, cat, f); if(v==null) ok=false; else total+=v; });
+    return {cat:cat, total:total, ok:ok};
+  }).sort(function(a,b){ return a.total-b.total; });
+  var base = linhas[0].total;
+  return '<fieldset class="op-upgrade"><legend>Simular categorias — '+faixas.length+' vida(s) da cotação</legend>'+
+    '<div class="muted" style="font-size:13px;margin-bottom:10px;">Idades: '+idades.join(", ")+' anos. Total mensal em cada categoria desta tabela.</div>'+
+    '<div class="tablewrap"><table class="grid"><thead><tr><th>Categoria</th><th class="num">Mensalidade total</th><th class="num">A mais que a de entrada</th></tr></thead><tbody>'+
+    linhas.map(function(l,i){ return '<tr'+(i===0?' class="op-linha-atual"':'')+'><td>'+escapeHtml(l.cat)+(l.ok?'':' <span class="muted" style="font-size:12px;">(faixa sem valor)</span>')+'</td><td class="num"><b>'+fmtMoney(l.total)+'</b></td><td class="num">'+(i===0?'—':'+ '+fmtMoney(l.total-base))+'</td></tr>'; }).join("")+
+    '</tbody></table></div></fieldset>';
+}
+function tabelaLeadBodyHtml(lead){
+  var atual = tabelasDoLead(lead.id)[0] || null;
+  return '<div id="histmodal-wrap">'+
+    '<div class="helpbox" style="margin-bottom:12px;">Cadastre aqui a tabela que foi vendida (todas as categorias). Quando o negócio virar cliente, ela vai junto automaticamente — e fica disponível em <b>Clientes → tabela & upgrade</b>.</div>'+
+    simulacaoPorIdadesHtml(atual, normalizarIdades(lead.idades))+
+    (atual? '<fieldset><legend>Tabela comercializada — vigência '+atual.ano_vigencia+(atual.operadora?' · '+escapeHtml(atual.operadora):'')+'</legend>'+
+      (atual.observacoes? '<div class="muted" style="font-size:13px;margin-bottom:8px;">'+escapeHtml(atual.observacoes)+'</div>' : '')+
+      tabelaGridHtml(atual)+'</fieldset>' : '')+
+    colarTabelaFormHtml(atual || {operadora: lead.operadora, ano_vigencia: new Date().getFullYear()})+
+  '</div>';
+}
+function openTabelaLeadModal(lead){
+  var close = openModal("Tabela comercializada — "+(lead.nome||lead.empresa||"—"), tabelaLeadBodyHtml(lead), function(closeFn){ closeFn(); }, "Fechar");
+  var mEl = document.querySelector(".modal"); if(mEl) mEl.style.maxWidth = "min(1180px, 96vw)";
+  openTabelaLeadModal.__wire(lead);
+}
+openTabelaLeadModal.__wire = function(lead){
+  wireColarTabela({
+    existentePorAno: function(ano){ return tabelasDoLead(lead.id).filter(function(t){ return t.ano_vigencia===ano; })[0]; },
+    base: {lead_id: lead.id},
+    onSaved: function(){
+      var fresh = state.leads.filter(function(l){ return l.id===lead.id; })[0] || lead;
+      var body = document.getElementById("modal-body");
+      if(body){ body.innerHTML = tabelaLeadBodyHtml(fresh); openTabelaLeadModal.__wire(fresh); }
+    }
+  });
+};
+/* Liga o "colar tabela" (ler + salvar) para cliente ou para negócio em implantação. */
+function wireColarTabela(ctx){
+  var btnLer = document.getElementById("btn-ler-tabela");
+  if(!btnLer) return;
+  btnLer.onclick = function(){
+    var lida = lerTabelaColada(document.getElementById("ct-texto").value);
+    document.getElementById("ct-preview").innerHTML = previewTabelaColadaHtml(lida);
+    if(lida.titulo && !document.getElementById("ct-desc").value) document.getElementById("ct-desc").value = lida.titulo;
+    var txtLow = document.getElementById("ct-texto").value.toLowerCase();
+    var opSel = document.getElementById("ct-operadora");
+    var achou = OPERADORAS.filter(function(o){ return o!=="Outros" && txtLow.indexOf(o.toLowerCase())>=0; })[0];
+    if(achou && opSel) opSel.value = achou;
+    var bt = document.getElementById("btn-salvar-tabela-colada");
+    if(!bt) return;
+    bt.onclick = async function(){
+      var ano = parseInt(document.getElementById("ct-ano").value,10) || new Date().getFullYear();
+      var operadora = document.getElementById("ct-operadora").value;
+      var desc = document.getElementById("ct-desc").value.trim();
+      var nomes = Array.prototype.map.call(document.querySelectorAll(".ct-nome"), function(i){ return i.value.trim(); });
+      if(nomes.some(function(n){ return !n; })){ toast("Dê um nome para cada categoria."); return; }
+      if(new Set(nomes).size!==nomes.length){ toast("Há categorias com o mesmo nome — ajuste para ficarem diferentes."); return; }
+      var novas = {};
+      nomes.forEach(function(nm, i){ novas[nm] = {}; ANS_BANDS.forEach(function(b){ var row = lida.linhas[b.label]; if(row && row[i]!=null) novas[nm][b.label] = row[i]; }); });
+      var existente = ctx.existentePorAno(ano);
+      var r;
+      if(existente){
+        var merged = {}; Object.keys(existente.tabela||{}).forEach(function(k){ merged[k]=existente.tabela[k]; });
+        Object.keys(novas).forEach(function(k){ merged[k]=novas[k]; });
+        r = await sb.from("tabelas_precos_cliente").update(Object.assign({tabela:merged, operadora:operadora, observacoes: desc||existente.observacoes||null}, ctx.base)).eq("id", existente.id);
+      } else {
+        r = await sb.from("tabelas_precos_cliente").insert(Object.assign({ano_vigencia:ano, operadora:operadora, tabela:novas, observacoes: desc||null, criado_por:currentUser()}, ctx.base));
+      }
+      if(r.error){
+        console.error(r.error);
+        toast(/lead_id/.test(r.error.message||"") ? "Falta rodar a atualização do banco (SQL da tabela na implantação)." : "Erro ao salvar a tabela: "+r.error.message);
+        return;
+      }
+      toast("Tabela "+ano+" salva com "+nomes.length+" categorias.");
+      await reload("tabelas_precos_cliente");
+      ctx.onSaved();
+    };
+  };
+}
+
 function openImplantacaoModal(lead){
   var imp = implantacaoDoLead(lead.id) || {};
   var cli = clienteDoLead(lead.id);
@@ -3328,8 +3602,12 @@ function openImplantacaoModal(lead){
   var boletoEmDia = imp.boleto_mes_referencia === mesAtual;
   var tarefas = tarefasDoLead(lead.id);
   var preCadastroPreenchido = !!(imp.pre_cadastro && imp.pre_cadastro.data && (imp.pre_cadastro.data.titular_nome || imp.pre_cadastro.data.razao_social));
+  var tabelaImp = cli ? tabelaAtualDoCliente(cli.id) : (tabelasDoLead(lead.id)[0]||null);
   var body =
     planoContratadoHtml(lead)+
+    '<div class="helpbox op-tabela-imp">'+(tabelaImp?
+      '📑 Tabela comercializada salva — '+categoriasDaTabela(tabelaImp).length+' categoria(s), vigência '+tabelaImp.ano_vigencia+'. <button class="linklike" id="im-tabela">ver tabela & simular upgrade</button>' :
+      '📑 Tabela comercializada ainda não cadastrada. <button class="linklike" id="im-tabela">cadastrar a tabela vendida</button>')+'</div>'+
     '<div class="helpbox">'+(
       cli? '✅ Cadastro do cliente concluído — <b>'+escapeHtml(clienteLabel(cli))+'</b>.' :
       '📋 '+(preCadastroPreenchido? 'Pré-cadastro preenchido (RG, CPF, dependentes, plano...).' : 'Pré-cadastro ainda vazio — preencha assim que os documentos chegarem.')+
@@ -3366,6 +3644,8 @@ function openImplantacaoModal(lead){
     closeFn();
   }, "Salvar");
 
+  var tabelaBtn = document.getElementById("im-tabela");
+  if(tabelaBtn) tabelaBtn.onclick = function(){ if(cli) openHistoricoModal(cli); else openTabelaLeadModal(lead); };
   var trocarPlanoBtn = document.getElementById("im-trocar-plano");
   if(trocarPlanoBtn) trocarPlanoBtn.onclick = function(){ openTrocaPlanoModal(lead); };
   var preCadastroBtn = document.getElementById("im-pre-cadastro");

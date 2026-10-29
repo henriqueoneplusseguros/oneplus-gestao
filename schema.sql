@@ -549,3 +549,8 @@ do $$ begin
       with check (bucket_id = 'leads' and auth.role() = 'authenticated');
   end if;
 end $$;
+
+-- ========== Tabela comercializada na implantação (out/2026) ==========
+alter table tabelas_precos_cliente add column if not exists lead_id uuid references leads(id) on delete set null;
+alter table tabelas_precos_cliente alter column cliente_id drop not null;
+create index if not exists tabelas_precos_cliente_lead_idx on tabelas_precos_cliente(lead_id);
