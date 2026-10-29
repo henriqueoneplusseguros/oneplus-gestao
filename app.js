@@ -724,6 +724,7 @@ function viewClientes(){
         '<div class="info-item"><span class="k">Faixa etária (titular)</span><span>'+(faixa? faixa.label+(faixa.nextChangeISO?' <span class="muted">· muda '+fmtDateISO(faixa.nextChangeISO)+'</span>':'') : '—')+'</span></div>'+
         '<div class="info-item"><span class="k">Revisão</span><span>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</span></div>'+
       '</div>'+
+      vidasValoresHtml(c)+
       '<div class="client-card-foot">'+
         '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">tabela & upgrade</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
       '</div>'+
@@ -802,7 +803,9 @@ function clienteFormHtml(c, deps, opts){
   '<div class="field row3"><div class="field"><label>Produto</label><select id="f-produto">'+PRODUTOS.map(function(p){return '<option'+(c.produto===p?' selected':'')+'>'+p+'</option>';}).join("")+'</select></div><div class="field"><label>Nome do plano</label><input id="f-plano" value="'+escapeHtml(c.plano_nome||"")+'" placeholder="ex: Amil Black"></div><div class="field"><label>Vendedor(a)</label><select id="f-vendedor">'+VENDEDORES.map(function(v){return '<option'+(c.vendedor===v?' selected':'')+'>'+v+'</option>';}).join("")+'</select></div></div>'+
   '<div class="field row3"><div class="field"><label>Data de inclusão</label><input type="date" id="f-inclusao" value="'+(c.data_inclusao||"")+'"></div><div class="field"><label>Vigência (início)</label><input type="date" id="f-vig-inicio" value="'+(c.vigencia_inicio||"")+'"></div><div class="field"><label>Vigência (duração)</label><select id="f-vig-meses"><option value="12"'+((c.duracao_contrato_meses||12)==12?' selected':'')+'>12 meses</option><option value="24"'+((c.duracao_contrato_meses||12)==24?' selected':'')+'>24 meses</option></select></div></div>'+
   '<div class="field row2"><div class="field"><label>Vigência (fim, calculado)</label><input type="date" id="f-vig-fim" value="'+(c.vigencia_fim||"")+'"></div><div class="field"><label>&nbsp;</label><div class="muted" style="font-size:11.5px;padding-top:8px;">Calculado a partir do início + duração — pode ajustar manualmente se precisar.</div></div></div>'+
-  '<div class="field row3">'+moneyFieldHtml("f-valor-benef", c.valor_por_beneficiario, "Valor por beneficiário (R$)")+moneyFieldHtml("f-valor-total", c.valor_contrato_total, "Valor do contrato total (R$)")+moneyFieldHtml("f-bonus", c.bonus_parcela4||0, "Bônus parcela 4 (R$, opcional)")+'</div>'+
+  '<div class="field row2"><div class="field"><label>Categoria contratada (da tabela)</label><select id="f-categoria" data-atual="'+escapeHtml(c.categoria_contratada||"")+'"><option value="">—</option></select><span class="muted op-valor-hint" id="f-categoria-hint"></span></div>'+
+    '<div class="field"><label>&nbsp;</label><div class="op-soma-tabela" id="f-soma-tabela"></div></div></div>'+
+  '<div class="field row3">'+moneyFieldHtml("f-valor-benef", c.valor_por_beneficiario, "Valor do titular (R$)")+moneyFieldHtml("f-valor-total", c.valor_contrato_total, "Valor do contrato total (R$)")+moneyFieldHtml("f-bonus", c.bonus_parcela4||0, "Bônus parcela 4 (R$, opcional)")+'</div>'+
   '<div class="field row3"><div class="field"><label>Data de fechamento (p/ comissão)</label><input type="date" id="f-fechamento" value="'+(c.data_fechamento||c.data_inclusao||"")+'"></div><div class="field"><label>Última revisão de plano</label><input type="date" id="f-revisao" value="'+(c.ultima_revisao||"")+'"></div><div class="field"><label>Status</label><select id="f-status"><option'+(c.status==="Ativo"?' selected':'')+'>Ativo</option><option'+(c.status==="Cancelado"?' selected':'')+'>Cancelado</option></select></div></div>'+
   '<div class="field row3"><div class="field"><label>Reajuste (índice %)</label><input type="number" step="0.01" id="f-reajuste-pct" value="'+(c.percentual_reajuste||"")+'" placeholder="ex: 8,5"></div><div class="field"><label>&nbsp;</label><button type="button" class="btn btn-ghost" id="btn-aplicar-reajuste">Aplicar reajuste ao valor do contrato</button></div><div class="field"><label>Último reajuste em</label><input type="date" id="f-reajuste-data" value="'+(c.data_ultimo_reajuste||"")+'" readonly></div></div>'+
   '</fieldset>'+
@@ -840,6 +843,91 @@ function clienteFormHtml(c, deps, opts){
   '<button type="button" class="linklike" id="btn-add-dep" style="margin-top:6px;">+ adicionar dependente</button></fieldset>'+
   '<div class="field"><label>Observações</label><textarea id="f-obs">'+escapeHtml(c.observacoes||"")+'</textarea></div>';
 }
+
+/* ===== Valor de cada vida pela tabela do contrato (titular e dependentes) ===== */
+function tabelaParaFormulario(c){
+  if(c && c.id){ var t = tabelaAtualDoCliente(c.id); if(t) return t; }
+  if(c && c.lead_id){ var tl = tabelasDoLead(c.lead_id)[0]; if(tl) return tl; }
+  return null;
+}
+function wireValoresPorFaixa(c){
+  var tabela = tabelaParaFormulario(c);
+  var sel = document.getElementById("f-categoria");
+  if(!sel) return;
+  var cats = categoriasDaTabela(tabela);
+  var atual = sel.getAttribute("data-atual") || "";
+  if(!atual && c && c.lead_id){
+    var lead = state.leads.filter(function(l){ return l.id===c.lead_id; })[0];
+    var palpite = lead && lead.categoria_plano ? cats.filter(function(k){ return k.toLowerCase().indexOf(String(lead.categoria_plano).toLowerCase())===0; })[0] : null;
+    if(palpite) atual = palpite;
+  }
+  sel.innerHTML = '<option value="">—</option>'+cats.map(function(k){ return '<option'+(k===atual?' selected':'')+'>'+escapeHtml(k)+'</option>'; }).join("");
+  var catHint = document.getElementById("f-categoria-hint");
+  if(!cats.length && catHint) catHint.textContent = "Cadastre a tabela comercializada (implantação ou “tabela & upgrade”) para o sistema calcular o valor de cada vida.";
+  function valorDe(nasc, cat){
+    if(!tabela || !cat || !nasc) return null;
+    var f = computeFaixa(nasc); if(!f) return null;
+    var v = valorNaTabela(tabela, cat, f.label);
+    return v==null ? null : {valor:v, faixa:f.label};
+  }
+  function dica(input){
+    var h = input.nextElementSibling;
+    if(!h || !h.classList || !h.classList.contains("op-valor-hint")){ h = document.createElement("span"); h.className = "op-valor-hint"; input.insertAdjacentElement("afterend", h); }
+    return h;
+  }
+  function pintar(preencherVazios){
+    var cat = sel.value;
+    var soma = 0, n = 0, completos = 0;
+    var nascT = document.getElementById("f-nasc").value;
+    var rT = valorDe(nascT, cat);
+    var inT = document.getElementById("f-valor-benef");
+    var hT = dica(inT);
+    if(hT) hT.textContent = rT ? "Tabela: "+fmtMoney(rT.valor)+" · "+rT.faixa : "";
+    if(rT){ if(preencherVazios && !inT.value) inT.value = moneyDisplay(rT.valor); soma += rT.valor; completos++; }
+    n++;
+    Array.prototype.forEach.call(document.querySelectorAll("[data-dep-row]"), function(row){
+      var nasc = row.querySelector(".dep-nasc").value;
+      if(!nasc && !row.querySelector(".dep-nome").value) return;
+      n++;
+      var catDep = (row.querySelector(".dep-categoria")||{}).value || cat;
+      var r = valorDe(nasc, catDep);
+      var inp = row.querySelector(".dep-valor");
+      var h = dica(inp);
+      if(h) h.textContent = r ? "Tabela: "+fmtMoney(r.valor)+" · "+r.faixa : (nasc && cat ? "Sem valor nessa faixa" : "");
+      if(r){ if(preencherVazios && !inp.value) inp.value = moneyDisplay(r.valor); soma += r.valor; completos++; }
+    });
+    var box = document.getElementById("f-soma-tabela");
+    if(box){
+      box.innerHTML = (cat && completos) ? '<div class="op-soma-linha"><span>Soma pela tabela ('+completos+' de '+n+' vida'+(n===1?'':'s')+')</span><b>'+fmtMoney(soma)+'</b></div><button type="button" class="linklike" id="f-usar-soma">usar como valor do contrato</button>' : '';
+      var usar = document.getElementById("f-usar-soma");
+      if(usar) usar.onclick = function(){ document.getElementById("f-valor-total").value = moneyDisplay(Math.round(soma*100)/100); toast("Valor do contrato atualizado pela soma da tabela."); };
+    }
+  }
+  sel.addEventListener("change", function(){ pintar(true); });
+  var form = document.getElementById("modal-body") || document;
+  form.addEventListener("input", function(e){ if(e.target.matches && e.target.matches("#f-nasc, .dep-nasc, .dep-nome")) pintar(true); });
+  form.addEventListener("click", function(e){ if(e.target && (e.target.id==="btn-add-dep" || e.target.hasAttribute("data-remove-dep"))) setTimeout(function(){ pintar(false); }, 0); });
+  pintar(true);
+}
+/* Lista "vidas e valores" no cartão do cliente */
+function vidasValoresHtml(c){
+  var tabela = tabelaAtualDoCliente(c.id);
+  var pessoas = [{nome: c.titular_nome || clienteLabel(c), tipo:"Titular", nasc:c.data_nascimento, valor:c.valor_por_beneficiario, cat:c.categoria_contratada}]
+    .concat(depsOf(c.id).map(function(d){ return {nome:d.nome, tipo:d.tipo||"Dependente", nasc:d.data_nascimento, valor:d.valor_beneficiario, cat:d.categoria_contratada||c.categoria_contratada}; }));
+  var total = 0, algum = false;
+  var linhas = pessoas.map(function(p){
+    var f = p.nasc ? computeFaixa(p.nasc) : null;
+    var idade = p.nasc ? ageOnISO(p.nasc, todayISO()) : null;
+    var v = (p.valor!=null && p.valor!=="" && Number(p.valor)>0) ? Number(p.valor) : null, origem = "";
+    if(v==null && tabela && p.cat && f){ v = valorNaTabela(tabela, p.cat, f.label); origem = v!=null ? ' <span class="muted" title="calculado pela tabela do contrato">· tabela</span>' : ''; }
+    if(v!=null){ total += v; algum = true; }
+    return '<div class="op-vida"><span class="op-vida-nome">'+escapeHtml(p.nome||"—")+' <span class="muted">'+escapeHtml(p.tipo)+(idade!=null? ' · '+idade+' anos':'')+'</span></span>'+
+      '<span class="op-vida-faixa">'+(f? f.label : '<span class="muted">sem nascimento</span>')+'</span>'+
+      '<span class="op-vida-valor">'+(v!=null? fmtMoney(v)+origem : '<span class="muted">—</span>')+'</span></div>';
+  }).join("");
+  return '<details class="op-vidas"'+(pessoas.length<=4?' open':'')+'><summary><span>Vidas e valores</span><span class="muted">'+pessoas.length+' vida'+(pessoas.length===1?'':'s')+(algum? ' · '+fmtMoney(total)+'/mês' : '')+(c.categoria_contratada? ' · '+escapeHtml(c.categoria_contratada) : '')+'</span></summary>'+linhas+(!algum && tabela && !c.categoria_contratada? '<div class="op-vida muted" style="display:block;font-size:12.5px;">Escolha a <b>categoria contratada</b> em “editar” para o sistema mostrar o valor de cada vida pela tabela.</div>' : '')+'</details>';
+}
+
 function depRowHtml(d,i,titularHint){
   d=d||{};
   var tipo = d.tipo||"Dependente";
@@ -850,7 +938,7 @@ function depRowHtml(d,i,titularHint){
       '<div class="field"><label>Nascimento <span class="dep-idade-out muted">'+(d.data_nascimento? "("+ageOnISO(d.data_nascimento, todayISO())+" ano"+(ageOnISO(d.data_nascimento, todayISO())===1?"":"s")+")" : "")+'</span></label><input type="date" class="dep-nasc" value="'+(d.data_nascimento||"")+'"></div>'+
       '<div class="field"><label>Nº carteirinha</label><input class="dep-carteirinha" value="'+escapeHtml(d.numero_carteirinha||"")+'"></div>'+
       '<div class="field"><label>Tipo</label><select class="dep-tipo">'+TIPOS_TITULARIDADE.map(function(t){return '<option'+(tipo===t?' selected':'')+'>'+t+'</option>';}).join("")+'</select></div>'+
-      '<div class="field"><label>Valor benefíc. (R$)</label><input type="text" inputmode="decimal" class="money-input dep-valor" value="'+escapeHtml(moneyDisplay(d.valor_beneficiario))+'" placeholder="0,00"></div>'+
+      '<div class="field"><label>Valor benefíc. (R$)</label><input type="text" inputmode="decimal" class="money-input dep-valor" value="'+escapeHtml(moneyDisplay(d.valor_beneficiario))+'" placeholder="0,00"><input type="hidden" class="dep-categoria" value="'+escapeHtml(d.categoria_contratada||"")+'"></div>'+
       '<button type="button" class="iconbtn" data-remove-dep="'+i+'">✕</button>'+
     '</div>'+
     '<div class="field dep-titular-wrap" style="margin-top:6px;'+(tipo==="Dependente"?"":"display:none;")+'"><label>Titular responsável</label><select class="dep-titular-ref" data-dep-titular-value="'+escapeHtml(titularHint||"")+'"><option value="">Titular principal</option></select></div>'+
@@ -1035,12 +1123,15 @@ function readClienteForm(){
     var carteirinhaEl = row.querySelector(".dep-carteirinha");
     var carteirinha = carteirinhaEl ? carteirinhaEl.value.trim() : "";
     var valor = parseMoneyBR(row.querySelector(".dep-valor").value);
+    var catEl = row.querySelector(".dep-categoria");
+    var catTit = document.getElementById("f-categoria");
+    var categoriaDep = (catEl && catEl.value) || (catTit && catTit.value) || null;
     var tipoEl = row.querySelector(".dep-tipo");
     var tipo = tipoEl ? tipoEl.value : "Dependente";
     var titularSel = row.querySelector(".dep-titular-ref");
     var titularRefRowIndex = (tipo==="Dependente" && titularSel && titularSel.value) ? titularSel.value : null;
     if(nome||cpf||nasc) deps.push({
-      id: rowIdMap[idx], nome:nome, cpf:cpf, data_nascimento:nasc||null, numero_carteirinha:carteirinha, valor_beneficiario:valor, tipo:tipo,
+      id: rowIdMap[idx], nome:nome, cpf:cpf, data_nascimento:nasc||null, numero_carteirinha:carteirinha, valor_beneficiario:valor, tipo:tipo, categoria_contratada:categoriaDep,
       titular_ref_id: titularRefRowIndex ? rowIdMap[titularRefRowIndex] : null
     });
   });
@@ -1075,6 +1166,7 @@ function readClienteForm(){
       vigencia_fim: document.getElementById("f-vig-fim").value || null,
       duracao_contrato_meses: parseInt(document.getElementById("f-vig-meses").value,10)||12,
       valor_por_beneficiario: parseMoneyBR(document.getElementById("f-valor-benef").value),
+      categoria_contratada: (document.getElementById("f-categoria") && document.getElementById("f-categoria").value) || null,
       valor_contrato_total: parseMoneyBR(document.getElementById("f-valor-total").value),
       bonus_parcela4: parseMoneyBR(document.getElementById("f-bonus").value),
       data_fechamento: document.getElementById("f-fechamento").value || null,
@@ -1134,6 +1226,7 @@ function openClienteModal(existing, afterSave, seedDeps){
   });
   wireClienteFormDeps();
   wireClienteFormExtra();
+  wireValoresPorFaixa(existing);
 }
 
 /* ================= BOLETOS (envio mensal recorrente) =================
@@ -3501,6 +3594,7 @@ function openPreCadastroModal(lead){
   }, "Salvar pré-cadastro");
   wireClienteFormExtra();
   wireClienteFormDeps();
+  wireValoresPorFaixa(Object.assign({}, seed, {lead_id: lead.id}));
 }
 
 /* ===== Tabela comercializada já na IMPLANTAÇÃO (antes de virar cliente) ===== */
