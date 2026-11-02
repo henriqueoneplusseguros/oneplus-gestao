@@ -237,19 +237,7 @@ function computeSchedule(cliente, params){
   var netVitalicio = valor * params.percentual_vitalicio * (1-params.taxa_imposto);
   return {p1:p1,p2:p2,p3:p3,bonusMonth:bonusMonth,vitalicioStart:vitalicioStart,netParcela:netParcela,netBonus:netBonus,netVitalicio:netVitalicio};
 }
-function faturamentoDoMes(mk, clientes, params){
-  var total=0;
-  clientes.forEach(function(c){
-    var s = computeSchedule(c,params);
-    if(!s) return;
-    if(s.p1===mk) total += s.netParcela;
-    if(s.p2===mk) total += s.netParcela;
-    if(s.p3===mk) total += s.netParcela;
-    if((c.bonus_parcela4||0)>0 && s.bonusMonth===mk) total += s.netBonus;
-    if(c.status!=="Cancelado" && mk>=s.vitalicioStart) total += s.netVitalicio;
-  });
-  return total;
-}
+function faturamentoDoMes(mk, clientes, params){ return faturamentoDoMesDetalhe(mk, clientes, params).total; }
 function nextRevisao(c){
   var base = c.ultima_revisao || c.data_fechamento || c.data_inclusao;
   if(!base) return null;
@@ -1434,23 +1422,6 @@ async function baixarFinanceiroArquivo(path){
   if(r.error || !r.data){ toast("Erro ao gerar link do arquivo."); return; }
   window.open(r.data.signedUrl, "_blank");
 }
-function viewFinanceiro(){
-  var clientes = state.clientes.slice().sort(function(a,b){ return clienteLabel(a).localeCompare(clienteLabel(b)); });
-  var header = '<div class="topbar"><div><h1>Financeiro</h1><div class="desc">Acesso restrito (Henrique e Kelly) · comissionamento recebido, demonstrativos e baixa de cliente</div></div></div>';
-  if(!clientes.length) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum cliente cadastrado ainda.</div></div></div>';
-  return header + '<div class="card"><div class="tablewrap"><table class="grid"><thead><tr><th>Cliente</th><th class="num">Valor contrato</th><th class="num">Comissão recebida</th><th>Status</th><th></th></tr></thead><tbody>'+
-    clientes.map(function(c){
-      var total = totalComissoesCliente(c.id);
-      return '<tr>'+
-        '<td>'+escapeHtml(clienteLabel(c))+'</td>'+
-        '<td class="num">'+fmtMoney(c.valor_contrato_total)+'</td>'+
-        '<td class="num">'+fmtMoney(total)+'</td>'+
-        '<td>'+(c.baixado_financeiro? '<span class="pill pill-ok">baixado'+(c.baixado_financeiro_em? ' em '+fmtDateISO(c.baixado_financeiro_em):'')+'</span>' : '<span class="pill pill-warn">em aberto</span>')+'</td>'+
-        '<td><button class="linklike" data-abrir-financeiro-cliente="'+c.id+'">abrir</button></td>'+
-      '</tr>';
-    }).join("")+
-    '</tbody></table></div></div>';
-}
 function openFinanceiroModal(cliente){
   var comissoes = state.comissoes_recebidas.filter(function(c){ return c.cliente_id===cliente.id; })
     .sort(function(a,b){ return (b.data_recebimento||"")<(a.data_recebimento||"")?-1:1; });
@@ -1464,14 +1435,9 @@ function openFinanceiroModal(cliente){
       '<div class="kv-row"><span class="k">Comissão esperada (3 parcelas · 300%)</span><span>'+fmtMoney(esperado300)+'</span></div>'+
     '</div>'+
     '<label class="rowflex" style="font-weight:400;margin-bottom:12px;"><input type="checkbox" id="fin-baixado" '+(cliente.baixado_financeiro?"checked":"")+'> Cliente baixado (encerrado financeiramente)</label>'+
-    '<fieldset><legend>Comissionamento deste contrato</legend>'+
-      '<div class="field row2">'+
-        '<div class="field"><label>Tem vitalício?</label><select id="fin-vitalicio-sn"><option value="nao"'+(!cliente.comissao_vitalicio?' selected':'')+'>Não</option><option value="sim"'+(cliente.comissao_vitalicio?' selected':'')+'>Sim</option></select></div>'+
-        '<div class="field" id="fin-vitalicio-pct-wrap" style="'+(cliente.comissao_vitalicio?'':'display:none;')+'"><label>% vitalício</label><input type="number" step="0.1" id="fin-vitalicio-pct" value="'+vitalicioPct+'"></div>'+
-      '</div>'+
-    '</fieldset>'+
+    comissaoCfgFormHtml(cliente)+
     '<fieldset style="margin-top:12px;"><legend>Lançar comissionamento recebido</legend>'+
-      '<div class="field row3"><div class="field"><label>Parcela</label><select id="fin-parcela">'+PARCELAS_COMISSAO.map(function(p){ return '<option'+(p==="Vitalício"&&!cliente.comissao_vitalicio?' disabled':'')+'>'+p+'</option>'; }).join("")+'</select></div>'+moneyFieldHtml("fin-valor", null, "Valor recebido (R$)")+'<div class="field"><label>Data de recebimento</label><input type="date" id="fin-data" value="'+todayISO()+'"></div></div>'+
+      '<div class="field row3"><div class="field"><label>Parcela</label><select id="fin-parcela">'+PARCELAS_COMISSAO.map(function(p){ return '<option>'+p+'</option>'; }).join("")+'</select></div>'+moneyFieldHtml("fin-valor", null, "Valor recebido (R$)")+'<div class="field"><label>Data de recebimento</label><input type="date" id="fin-data" value="'+todayISO()+'"></div></div>'+
       '<div class="field row2"><div class="field"><label>Mês de referência</label><input id="fin-mes" placeholder="ex: 2026-09"></div><div class="field"><label>Observações</label><input id="fin-obs"></div></div>'+
       '<div class="field"><label>Demonstrativo (opcional)</label><input type="file" id="fin-arquivo" accept="application/pdf,image/*"></div>'+
       '<button type="button" class="btn btn-primary" id="fin-add" style="margin-top:6px;">+ lançar</button>'+
@@ -1493,6 +1459,7 @@ function openFinanceiroModal(cliente){
       }).join("") : '<div class="empty">Nenhum lançamento ainda.</div>')+
     '</fieldset>';
   openModal("Financeiro — "+clienteLabel(cliente), body, function(closeFn){ closeFn(); }, "Fechar");
+  wireComissaoCfgForm(cliente, openFinanceiroModal);
 
   var baixadoEl = document.getElementById("fin-baixado");
   if(baixadoEl) baixadoEl.onchange = function(){
@@ -1516,9 +1483,17 @@ function openFinanceiroModal(cliente){
     var fileEl = document.getElementById("fin-arquivo");
     var arquivoPath = null;
     if(fileEl.files[0]) arquivoPath = await uploadFinanceiroArquivo(cliente.id, "demonstrativo", fileEl.files[0]);
+    var parcelaLancada = document.getElementById("fin-parcela").value;
+    var mParc = /^Parcela (\d)$/.exec(parcelaLancada);
+    if(mParc){
+      var cfgL = Object.assign({}, comissaoCfg(cliente) || {});
+      cfgL["p"+mParc[1]] = {status:"recebida", mes: monthKeyFromISO(document.getElementById("fin-data").value || todayISO())};
+      await salvarComissaoCfg(cliente, cfgL);
+      cliente = state.clientes.filter(function(x){ return x.id===cliente.id; })[0] || cliente;
+    }
     await dbInsert("comissoes_recebidas", {
       cliente_id: cliente.id, valor: valor,
-      parcela: document.getElementById("fin-parcela").value,
+      parcela: parcelaLancada,
       data_recebimento: document.getElementById("fin-data").value || null,
       mes_referencia: document.getElementById("fin-mes").value.trim() || null,
       observacoes: document.getElementById("fin-obs").value.trim(),
@@ -1530,6 +1505,227 @@ function openFinanceiroModal(cliente){
     btn.onclick = function(){ baixarFinanceiroArquivo(btn.getAttribute("data-baixar-financeiro")); };
   });
   wireMoneyInputs(document.getElementById("modal-body"));
+}
+
+/* ================= COMISSÃO POR CLIENTE (previsão / fluxo de caixa) =================
+   clientes.comissao_parcelas (jsonb) guarda, por cliente, o que já entrou e o que falta:
+     { p1:{status, mes}, p2:{...}, p3:{...}, vitalicio:true|false|null, vitalicio_inicio:"AAAA-MM",
+       conferido_em, conferido_por }
+   status: "recebida" | "a_receber" | "nao_tem"; mes = mês previsto (AAAA-MM).
+   O que não foi conferido segue a regra antiga: parcelas nos 3 meses a partir do fechamento
+   e vitalício de params.percentual_vitalicio a partir do 4º mês (por isso a previsão não
+   "zera" enquanto a carteira está sendo conferida). Valores sempre líquidos de imposto. */
+var COMISSAO_STATUS = [["a_receber","A receber"],["recebida","Já recebida"],["nao_tem","Não tem"]];
+function nParcelasCheias(){ return (state.params && state.params.parcelas_cheias) || 3; }
+function comissaoCfg(c){
+  var x = c && c.comissao_parcelas;
+  if(typeof x === "string"){ try { x = JSON.parse(x); } catch(e){ x = null; } }
+  return (x && typeof x === "object") ? x : null;
+}
+function comissaoConferida(c){
+  var cfg = comissaoCfg(c); if(!cfg) return false;
+  if(cfg.vitalicio === undefined || cfg.vitalicio === null) return false;
+  for(var i=1;i<=nParcelasCheias();i++){ if(!cfg["p"+i] || !cfg["p"+i].status) return false; }
+  return true;
+}
+function valorBaseComissao(c){ return c.valor_contrato_total || c.valor_por_beneficiario || 0; }
+function vitalicioDoCliente(c, params){
+  var cfg = comissaoCfg(c);
+  var tem = (cfg && cfg.vitalicio !== undefined && cfg.vitalicio !== null) ? !!cfg.vitalicio : true;
+  var pct = (cfg && cfg.vitalicio && c.comissao_vitalicio_pct != null) ? c.comissao_vitalicio_pct/100 : (params.percentual_vitalicio||0);
+  var s = computeSchedule(c, params);
+  var inicio = (cfg && cfg.vitalicio_inicio) || (s ? s.vitalicioStart : null);
+  return {tem: tem, pct: pct, inicio: inicio, presumido: !(cfg && cfg.vitalicio !== undefined && cfg.vitalicio !== null)};
+}
+/* Lista das parcelas cheias do cliente com status e mês em que entram na previsão. */
+function parcelasComissaoCliente(c, params){
+  var cfg = comissaoCfg(c), s = computeSchedule(c, params), hoje = todayMonthKey(), out = [];
+  var mesesSched = s ? [s.p1, s.p2, s.p3] : [];
+  for(var i=1;i<=nParcelasCheias();i++){
+    var p = cfg && cfg["p"+i];
+    var mesSched = mesesSched[i-1] || (s ? monthKeyAdd(s.p1, i-1) : null);
+    var status, mes, presumido = false;
+    if(p && p.status){ status = p.status; mes = p.mes || mesSched; }
+    else {
+      presumido = true; mes = mesSched;
+      status = !mes ? "nao_tem" : (mes < hoje ? "recebida" : "a_receber");
+    }
+    var atrasada = status==="a_receber" && mes && mes < hoje;
+    out.push({n:i, status:status, mes:mes, mesPrevisao: status==="a_receber" ? (atrasada || !mes ? hoje : mes) : null, atrasada:atrasada, presumido:presumido});
+  }
+  return out;
+}
+/* Comissão líquida prevista de UM cliente num mês: {parcelas, bonus, vitalicio}. */
+function comissaoClienteNoMes(c, mk, params){
+  var r = {parcelas:0, bonus:0, vitalicio:0};
+  if(c.status==="Cancelado" || c.baixado_financeiro) return r;
+  var valor = valorBaseComissao(c), liq = 1 - (params.taxa_imposto||0);
+  parcelasComissaoCliente(c, params).forEach(function(p){ if(p.mesPrevisao===mk) r.parcelas += valor * liq; });
+  var s = computeSchedule(c, params);
+  if(s && (c.bonus_parcela4||0) > 0 && s.bonusMonth===mk) r.bonus += (c.bonus_parcela4||0) * liq;
+  var v = vitalicioDoCliente(c, params);
+  if(v.tem && v.inicio && mk >= v.inicio) r.vitalicio += valor * v.pct * liq;
+  return r;
+}
+function faturamentoDoMesDetalhe(mk, clientes, params){
+  var t = {parcelas:0, bonus:0, vitalicio:0};
+  clientes.forEach(function(c){ var r = comissaoClienteNoMes(c, mk, params); t.parcelas += r.parcelas; t.bonus += r.bonus; t.vitalicio += r.vitalicio; });
+  t.total = t.parcelas + t.bonus + t.vitalicio;
+  return t;
+}
+function resumo300Html(c){
+  var ps = parcelasComissaoCliente(c, state.params);
+  var falta = ps.filter(function(p){ return p.status==="a_receber"; });
+  var conferida = comissaoConferida(c);
+  var txt;
+  if(!falta.length) txt = ps.every(function(p){ return p.status==="nao_tem"; }) ? '<span class="muted">sem parcelas</span>' : '<span class="pill pill-ok">recebido</span>';
+  else txt = '<span class="pill '+(falta.some(function(p){ return p.atrasada; })?'pill-bad':'pill-warn')+'">falta '+falta.map(function(p){ return 'P'+p.n; }).join(", ")+'</span>';
+  return txt + (conferida? '' : ' <span class="muted" style="font-size:11.5px;" title="Ainda não conferido — o sistema está supondo pelo mês de fechamento">(estimado)</span>');
+}
+function resumoVitalicioHtml(c){
+  var v = vitalicioDoCliente(c, state.params);
+  if(v.presumido) return '<span class="muted">? (supondo '+fmtPct(v.pct)+')</span>';
+  return v.tem ? '<span class="pill pill-ok">sim · '+fmtPct(v.pct)+'</span>' : '<span class="pill pill-muted">não</span>';
+}
+async function salvarComissaoCfg(cliente, cfg, extra){
+  cfg.conferido_em = new Date().toISOString(); cfg.conferido_por = currentUser();
+  var patch = Object.assign({comissao_parcelas: cfg}, extra||{});
+  if(cfg.vitalicio !== undefined && cfg.vitalicio !== null) patch.comissao_vitalicio = !!cfg.vitalicio;
+  var r = await sb.from("clientes").update(patch).eq("id", cliente.id);
+  if(r.error){ console.error(r.error); toast(/comissao_parcelas/.test(r.error.message||"") ? "Falta a atualização do banco (comissão por cliente)." : "Erro ao salvar: "+r.error.message); return false; }
+  state.clientes = state.clientes.map(function(x){ return x.id===cliente.id ? Object.assign({}, x, patch) : x; });
+  return true;
+}
+/* Atalho: "já recebi os 300%" — marca as parcelas cheias como recebidas (mantém o vitalício). */
+async function marcar300Recebido(cliente){
+  var cfg = Object.assign({}, comissaoCfg(cliente) || {});
+  parcelasComissaoCliente(cliente, state.params).forEach(function(p){ cfg["p"+p.n] = {status:"recebida", mes: p.mes || null}; });
+  var ok = await salvarComissaoCfg(cliente, cfg);
+  if(ok){ toast("300% marcado como recebido — fica só o vitalício."); render(); }
+}
+async function definirVitalicioRapido(cliente, valor){
+  var cfg = Object.assign({}, comissaoCfg(cliente) || {});
+  cfg.vitalicio = valor==="" ? null : (valor==="sim");
+  if(cfg.vitalicio && !cfg.vitalicio_inicio){ var v = vitalicioDoCliente(cliente, state.params); cfg.vitalicio_inicio = v.inicio || todayMonthKey(); }
+  var ok = await salvarComissaoCfg(cliente, cfg);
+  if(ok){ toast(valor==="sim" ? "Vitalício: sim." : (valor==="nao" ? "Vitalício: não." : "Vitalício: não informado.")); render(); }
+}
+function comissaoCfgFormHtml(c){
+  var ps = parcelasComissaoCliente(c, state.params), v = vitalicioDoCliente(c, state.params), cfg = comissaoCfg(c) || {};
+  var vitSel = (cfg.vitalicio === true) ? "sim" : (cfg.vitalicio === false ? "nao" : "");
+  var pctAtual = c.comissao_vitalicio_pct != null ? c.comissao_vitalicio_pct : (state.params.percentual_vitalicio||0)*100;
+  return '<fieldset><legend>Comissão deste contrato (o que já entrou e o que falta)</legend>'+
+    '<div class="helpbox" style="margin-bottom:8px;">Marque o que <b>já recebeu</b> e o que <b>ainda vai receber</b>. Só o que está "A receber" e o vitalício entram no fluxo de caixa — nada aqui lança dinheiro no financeiro.</div>'+
+    '<div class="rowflex" style="margin-bottom:8px;"><button type="button" class="btn btn-ghost btn-sm" id="cc-300-ok">✓ Já recebi os '+(nParcelasCheias()*100)+'% (só vitalício daqui pra frente)</button></div>'+
+    ps.map(function(p){
+      return '<div class="field row2" style="align-items:end;"><div class="field"><label>Parcela '+p.n+(p.presumido? ' <span class="muted">(estimado)</span>' : '')+'</label><select id="cc-p'+p.n+'-status">'+
+        COMISSAO_STATUS.map(function(o){ return '<option value="'+o[0]+'"'+(p.status===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select></div>'+
+        '<div class="field"><label>Mês previsto / recebido</label><input type="month" id="cc-p'+p.n+'-mes" value="'+escapeHtml(p.mes||"")+'"></div></div>';
+    }).join("")+
+    '<div class="field row3" style="margin-top:6px;"><div class="field"><label>Tem vitalício?</label><select id="cc-vit"><option value=""'+(vitSel===""?' selected':'')+'>Não informado</option><option value="sim"'+(vitSel==="sim"?' selected':'')+'>Sim</option><option value="nao"'+(vitSel==="nao"?' selected':'')+'>Não</option></select></div>'+
+      '<div class="field"><label>% vitalício</label><input type="number" step="0.1" min="0" id="cc-vit-pct" value="'+pctAtual+'"></div>'+
+      '<div class="field"><label>Vitalício a partir de</label><input type="month" id="cc-vit-inicio" value="'+escapeHtml(cfg.vitalicio_inicio || v.inicio || "")+'"></div></div>'+
+    '<button type="button" class="btn btn-primary btn-sm" id="cc-salvar" style="justify-self:start;margin-top:6px;">Salvar comissão</button>'+
+    (cfg.conferido_em? '<div class="muted" style="font-size:11.5px;">Conferido em '+fmtDateTime(cfg.conferido_em)+(cfg.conferido_por? ' · '+escapeHtml(String(cfg.conferido_por).split("@")[0]) : '')+'</div>' : '')+
+  '</fieldset>';
+}
+function wireComissaoCfgForm(cliente, reabrir){
+  var b300 = document.getElementById("cc-300-ok");
+  if(b300) b300.onclick = function(){
+    for(var i=1;i<=nParcelasCheias();i++){ var s = document.getElementById("cc-p"+i+"-status"); if(s) s.value = "recebida"; }
+    toast("Parcelas marcadas como recebidas — confira o vitalício e clique em Salvar comissão.");
+  };
+  var bs = document.getElementById("cc-salvar");
+  if(bs) bs.onclick = async function(){
+    var cfg = Object.assign({}, comissaoCfg(cliente) || {});
+    for(var i=1;i<=nParcelasCheias();i++){
+      cfg["p"+i] = {status: document.getElementById("cc-p"+i+"-status").value, mes: document.getElementById("cc-p"+i+"-mes").value || null};
+    }
+    var vit = document.getElementById("cc-vit").value;
+    cfg.vitalicio = vit==="" ? null : (vit==="sim");
+    cfg.vitalicio_inicio = document.getElementById("cc-vit-inicio").value || null;
+    var pct = parseFloat(String(document.getElementById("cc-vit-pct").value).replace(",", "."));
+    var ok = await salvarComissaoCfg(cliente, cfg, isNaN(pct) ? {} : {comissao_vitalicio_pct: pct});
+    if(ok){ toast("Comissão do cliente salva."); var atual = state.clientes.filter(function(x){ return x.id===cliente.id; })[0]; if(reabrir && atual) reabrir(atual); render(); }
+  };
+}
+
+/* ---- tela Financeiro: fluxo de caixa + comissão por cliente ---- */
+var finFiltro = {busca:"", pendentes:false};
+function viewFinanceiroFluxo(){
+  var p = state.params, hoje = todayMonthKey(), meta = p.meta_mensal_padrao||0;
+  var meses = []; for(var i=0;i<12;i++){ meses.push(monthKeyAdd(hoje,i)); }
+  var linhas = meses.map(function(mk){ return {mk:mk, d:faturamentoDoMesDetalhe(mk, state.clientes, p)}; });
+  var aReceber = 0, atrasadas = 0;
+  state.clientes.forEach(function(c){
+    if(c.status==="Cancelado" || c.baixado_financeiro) return;
+    parcelasComissaoCliente(c, p).forEach(function(x){ if(x.status==="a_receber"){ aReceber += valorBaseComissao(c)*(1-(p.taxa_imposto||0)); if(x.atrasada) atrasadas++; } });
+  });
+  var naoConferidos = state.clientes.filter(function(c){ return c.status!=="Cancelado" && !c.baixado_financeiro && !comissaoConferida(c); }).length;
+  var tiles = '<div class="tiles">'+
+    tile("Previsto "+monthLabel(hoje), fmtMoney(linhas[0].d.total), "parcelas "+fmtMoney(linhas[0].d.parcelas+linhas[0].d.bonus)+" · vitalício "+fmtMoney(linhas[0].d.vitalicio))+
+    tile("Próximos 3 meses", fmtMoney(linhas.slice(0,3).reduce(function(s,l){ return s+l.d.total; },0)), "líquido")+
+    tile("Parcelas cheias a receber", fmtMoney(aReceber), atrasadas? atrasadas+" parcela(s) atrasada(s)" : "nenhuma atrasada")+
+    tile("Vitalício por mês (hoje)", fmtMoney(linhas[0].d.vitalicio), "carteira recorrente")+
+    tile("Clientes a conferir", naoConferidos, naoConferidos? "comissão ainda estimada — confira abaixo" : "tudo conferido ✓")+
+  '</div>';
+  var tabela = '<div class="card"><div class="card-head"><h2>Fluxo de caixa de comissões — próximos 12 meses</h2><div class="meta">líquido de '+fmtPct(p.taxa_imposto||0)+' de imposto</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+    '<th>Mês</th><th class="num">Parcelas cheias</th><th class="num">Vitalício</th><th class="num">Total previsto</th>'+(meta? '<th class="num">Meta</th><th class="num">Diferença</th>' : '')+'</tr></thead><tbody>'+
+    linhas.map(function(l){
+      var diff = l.d.total - meta;
+      return '<tr><td>'+monthLabel(l.mk)+(l.mk===hoje? ' <span class="tag">atual</span>' : '')+'</td><td class="num">'+fmtMoney(l.d.parcelas+l.d.bonus)+'</td><td class="num">'+fmtMoney(l.d.vitalicio)+'</td><td class="num"><b>'+fmtMoney(l.d.total)+'</b></td>'+
+        (meta? '<td class="num">'+fmtMoney(meta)+'</td><td class="num" style="color:'+(diff<0?'var(--danger)':'var(--success)')+'">'+fmtMoney(diff)+'</td>' : '')+'</tr>';
+    }).join("")+
+    '<tr><td><b>Total 12 meses</b></td><td class="num">'+fmtMoney(linhas.reduce(function(s,l){ return s+l.d.parcelas+l.d.bonus; },0))+'</td><td class="num">'+fmtMoney(linhas.reduce(function(s,l){ return s+l.d.vitalicio; },0))+'</td><td class="num"><b>'+fmtMoney(linhas.reduce(function(s,l){ return s+l.d.total; },0))+'</b></td>'+(meta? '<td class="num">'+fmtMoney(meta*12)+'</td><td></td>' : '')+'</tr>'+
+    '</tbody></table></div><div class="muted" style="font-size:12px;margin-top:8px;">Parcela "A receber" com mês já passado entra no mês atual (atrasada). Clientes ainda não conferidos entram pela regra padrão: parcelas nos 3 meses a partir do fechamento e vitalício de '+fmtPct(p.percentual_vitalicio||0)+' depois disso. Vendas que ainda estão na Implantação aparecem nos Relatórios.</div></div></div>';
+  return tiles + tabela;
+}
+
+function viewFinanceiro(){
+  var header = '<div class="topbar"><div><h1>Financeiro</h1><div class="desc">Acesso restrito (Henrique e Kelly) · fluxo de caixa de comissões, comissão por cliente, recebimentos e baixa</div></div></div>';
+  var todos = state.clientes.slice().sort(function(a,b){ return clienteLabel(a).localeCompare(clienteLabel(b)); });
+  if(!todos.length) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum cliente cadastrado ainda.</div></div></div>';
+  var q = (finFiltro.busca||"").toLowerCase();
+  var lista = todos.filter(function(c){
+    if(finFiltro.pendentes && (comissaoConferida(c) || c.status==="Cancelado" || c.baixado_financeiro)) return false;
+    if(q && (clienteLabel(c)+" "+(c.titular_nome||"")+" "+(c.cnpj_cpf||"")).toLowerCase().indexOf(q)===-1) return false;
+    return true;
+  });
+  var hoje = todayMonthKey();
+  var filtros = '<div class="funil-filterbar">'+
+    '<div class="field grow"><label>Buscar cliente</label><input id="fin-busca" placeholder="Nome, razão social ou CNPJ" value="'+escapeHtml(finFiltro.busca)+'"></div>'+
+    '<label class="rowflex" style="font-weight:400;font-size:12.5px;padding-bottom:9px;white-space:nowrap;"><input type="checkbox" id="fin-pendentes" '+(finFiltro.pendentes?'checked':'')+'> só os que faltam conferir</label>'+
+  '</div>';
+  var tabela = '<div class="card"><div class="card-head"><h2>Comissão por cliente</h2><div class="meta">'+lista.length+' de '+todos.length+' · marque o que já recebeu e se tem vitalício</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+    '<th style="min-width:200px;">Cliente</th><th class="num">Valor contrato</th><th>Fechamento</th><th>300%</th><th>Vitalício</th><th class="num">Previsto '+monthLabel(hoje)+'</th><th class="num">Lançado</th><th>Status</th><th></th>'+
+    '</tr></thead><tbody>'+
+    lista.map(function(c){
+      var cfg = comissaoCfg(c) || {}, vitSel = cfg.vitalicio===true ? "sim" : (cfg.vitalicio===false ? "nao" : "");
+      var prev = comissaoClienteNoMes(c, hoje, state.params);
+      var falta = parcelasComissaoCliente(c, state.params).some(function(p){ return p.status==="a_receber"; });
+      return '<tr>'+
+        '<td><b>'+escapeHtml(clienteLabel(c))+'</b>'+(c.titular_nome && c.razao_social? '<div class="muted" style="font-size:12px;">'+escapeHtml(c.titular_nome)+'</div>' : '')+'</td>'+
+        '<td class="num" style="white-space:nowrap;">'+fmtMoney(c.valor_contrato_total)+'</td>'+
+        '<td style="white-space:nowrap;">'+fmtDateISO(c.data_fechamento || c.data_inclusao)+'</td>'+
+        '<td style="white-space:nowrap;">'+resumo300Html(c)+(falta? ' <button class="linklike" data-fin-300="'+c.id+'" title="Marcar as parcelas cheias como já recebidas">✓ recebido</button>' : '')+'</td>'+
+        '<td><select class="fin-vit-rapido" data-fin-vit="'+c.id+'" style="min-width:96px;"><option value=""'+(vitSel===""?' selected':'')+'>?</option><option value="sim"'+(vitSel==="sim"?' selected':'')+'>Sim</option><option value="nao"'+(vitSel==="nao"?' selected':'')+'>Não</option></select></td>'+
+        '<td class="num" style="white-space:nowrap;">'+fmtMoney(prev.parcelas+prev.bonus+prev.vitalicio)+'</td>'+
+        '<td class="num" style="white-space:nowrap;">'+fmtMoney(totalComissoesCliente(c.id))+'</td>'+
+        '<td>'+(c.status==="Cancelado"? '<span class="pill pill-bad">cancelado</span>' : (c.baixado_financeiro? '<span class="pill pill-muted">baixado</span>' : (comissaoConferida(c)? '<span class="pill pill-ok">conferido</span>' : '<span class="pill pill-warn">a conferir</span>')))+'</td>'+
+        '<td><button class="linklike" data-abrir-financeiro-cliente="'+c.id+'">abrir</button></td>'+
+      '</tr>';
+    }).join("")+
+    '</tbody></table></div>'+(lista.length? '' : '<div class="empty">Nenhum cliente com esses filtros.</div>')+'</div></div>';
+  return header + viewFinanceiroFluxo() + filtros + tabela;
+}
+function wireFinanceiro(){
+  if(state.tab!=="financeiro" || !podeVerFinanceiro()) return;
+  var busca = document.getElementById("fin-busca");
+  if(busca) busca.oninput = function(){ finFiltro.busca = busca.value; render(); var el = document.getElementById("fin-busca"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } };
+  var pend = document.getElementById("fin-pendentes"); if(pend) pend.onchange = function(){ finFiltro.pendentes = pend.checked; render(); };
+  function cli(id){ return state.clientes.filter(function(x){ return x.id===id; })[0]; }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-fin-300]"), function(b){ b.onclick = function(){ var c = cli(b.getAttribute("data-fin-300")); if(c) marcar300Recebido(c); }; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-fin-vit]"), function(s){ s.onchange = function(){ var c = cli(s.getAttribute("data-fin-vit")); if(c) definirVitalicioRapido(c, s.value); }; });
 }
 
 /* ================= CLIENTES: Excel (importar / exportar) ================= */
@@ -4462,6 +4658,7 @@ function viewParametros(){
     '<div class="field row2"><div class="field"><label>Meta de vendas mensal (quantidade)</label><input type="number" step="1" id="p-meta-vendas" value="'+(p.meta_vendas_mensal||0)+'"></div><div class="field"></div></div>'+
     '<button class="btn btn-primary" id="btn-salvar-params" style="width:fit-content;">Salvar</button>'+
   '</div></div>'+
+  (podeVerFinanceiro()? '<div class="card"><div class="card-head"><h2>Comissão por cliente</h2><div class="meta">300% recebido · vitalício sim/não</div></div><div class="card-body"><div class="helpbox">Os percentuais acima são o padrão. O que cada cliente já pagou (as 3 parcelas cheias) e se ele tem vitalício fica em <b>Financeiro → Comissão por cliente</b>, junto com o fluxo de caixa.</div><button class="btn btn-primary" id="btn-ir-comissao-cliente" style="width:fit-content;">Abrir comissão por cliente →</button></div></div>' : '')+
   '<div class="card"><div class="card-head"><h2>Modelos de carência</h2><div class="meta">quadros de operadoras/planos</div></div><div class="card-body">'+
   '<div class="helpbox">Cadastre aqui o quadro de carências de cada operadora/plano (como o da Porto Seguro — Linha P). Depois, no cadastro do cliente (fieldset "Plano anterior e carências"), escolha o modelo e a faixa certa e o sistema calcula sozinho a data em que cada carência termina, a partir da vigência (início).</div>'+
   (state.carencia_modelos.length===0? '<div class="empty">Nenhum modelo cadastrado ainda.</div>' :
@@ -4486,6 +4683,8 @@ function viewParametros(){
 function wireActions(){
   wireMoneyInputs(document);
   wireEmpresas();
+  wireFinanceiro();
+  var irCom = document.getElementById("btn-ir-comissao-cliente"); if(irCom) irCom.onclick = function(){ state.tab = "financeiro"; render(); window.scrollTo(0,0); };
   wireRetornos();
   wireRelatorios();
   var btnRel = document.getElementById("btn-relatorios"); if(btnRel) btnRel.onclick = function(){ state.tab = "relatorios"; render(); window.scrollTo(0,0); };
