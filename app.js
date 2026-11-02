@@ -1515,7 +1515,7 @@ function openFinanceiroModal(cliente){
    O que não foi conferido segue a regra antiga: parcelas nos 3 meses a partir do fechamento
    e vitalício de params.percentual_vitalicio a partir do 4º mês (por isso a previsão não
    "zera" enquanto a carteira está sendo conferida). Valores sempre líquidos de imposto. */
-var COMISSAO_STATUS = [["a_receber","A receber"],["recebida","Já recebida"],["nao_tem","Não tem"]];
+var COMISSAO_STATUS = [["","— definir —"],["a_receber","A receber"],["recebida","Já recebida"],["nao_tem","Não tem"]];
 function nParcelasCheias(){ return (state.params && state.params.parcelas_cheias) || 3; }
 function comissaoCfg(c){
   var x = c && c.comissao_parcelas;
@@ -1531,27 +1531,23 @@ function comissaoConferida(c){
 function valorBaseComissao(c){ return c.valor_contrato_total || c.valor_por_beneficiario || 0; }
 function vitalicioDoCliente(c, params){
   var cfg = comissaoCfg(c);
-  var tem = (cfg && cfg.vitalicio !== undefined && cfg.vitalicio !== null) ? !!cfg.vitalicio : true;
-  var pct = (cfg && cfg.vitalicio && c.comissao_vitalicio_pct != null) ? c.comissao_vitalicio_pct/100 : (params.percentual_vitalicio||0);
+  var informado = !!(cfg && cfg.vitalicio !== undefined && cfg.vitalicio !== null);
+  var tem = informado && cfg.vitalicio === true;
+  var pct = c.comissao_vitalicio_pct != null ? c.comissao_vitalicio_pct/100 : (params.percentual_vitalicio||0);
   var s = computeSchedule(c, params);
-  var inicio = (cfg && cfg.vitalicio_inicio) || (s ? s.vitalicioStart : null);
-  return {tem: tem, pct: pct, inicio: inicio, presumido: !(cfg && cfg.vitalicio !== undefined && cfg.vitalicio !== null)};
+  var inicio = (cfg && cfg.vitalicio_inicio) || (s ? s.vitalicioStart : null) || todayMonthKey();
+  return {tem: tem, pct: pct, inicio: inicio, presumido: !informado};
 }
 /* Lista das parcelas cheias do cliente com status e mês em que entram na previsão. */
 function parcelasComissaoCliente(c, params){
-  var cfg = comissaoCfg(c), s = computeSchedule(c, params), hoje = todayMonthKey(), out = [];
-  var mesesSched = s ? [s.p1, s.p2, s.p3] : [];
+  /* 100% manual: só vale o que foi marcado. Parcela sem marcação = "indefinida" e fica fora da previsão. */
+  var cfg = comissaoCfg(c), hoje = todayMonthKey(), out = [];
   for(var i=1;i<=nParcelasCheias();i++){
     var p = cfg && cfg["p"+i];
-    var mesSched = mesesSched[i-1] || (s ? monthKeyAdd(s.p1, i-1) : null);
-    var status, mes, presumido = false;
-    if(p && p.status){ status = p.status; mes = p.mes || mesSched; }
-    else {
-      presumido = true; mes = mesSched;
-      status = !mes ? "nao_tem" : (mes < hoje ? "recebida" : "a_receber");
-    }
+    var status = (p && p.status) ? p.status : "indefinida";
+    var mes = (p && p.mes) || null;
     var atrasada = status==="a_receber" && mes && mes < hoje;
-    out.push({n:i, status:status, mes:mes, mesPrevisao: status==="a_receber" ? (atrasada || !mes ? hoje : mes) : null, atrasada:atrasada, presumido:presumido});
+    out.push({n:i, status:status, mes:mes, mesPrevisao: status==="a_receber" ? (atrasada || !mes ? hoje : mes) : null, atrasada:atrasada, presumido: status==="indefinida"});
   }
   return out;
 }
@@ -1575,16 +1571,18 @@ function faturamentoDoMesDetalhe(mk, clientes, params){
 }
 function resumo300Html(c){
   var ps = parcelasComissaoCliente(c, state.params);
+  var indef = ps.filter(function(p){ return p.status==="indefinida"; });
   var falta = ps.filter(function(p){ return p.status==="a_receber"; });
-  var conferida = comissaoConferida(c);
+  if(indef.length===ps.length) return '<span class="pill pill-muted">não definido</span>';
   var txt;
-  if(!falta.length) txt = ps.every(function(p){ return p.status==="nao_tem"; }) ? '<span class="muted">sem parcelas</span>' : '<span class="pill pill-ok">recebido</span>';
-  else txt = '<span class="pill '+(falta.some(function(p){ return p.atrasada; })?'pill-bad':'pill-warn')+'">falta '+falta.map(function(p){ return 'P'+p.n; }).join(", ")+'</span>';
-  return txt + (conferida? '' : ' <span class="muted" style="font-size:11.5px;" title="Ainda não conferido — o sistema está supondo pelo mês de fechamento">(estimado)</span>');
+  if(falta.length) txt = '<span class="pill '+(falta.some(function(p){ return p.atrasada; })?'pill-bad':'pill-warn')+'">falta '+falta.map(function(p){ return 'P'+p.n; }).join(", ")+'</span>';
+  else if(ps.every(function(p){ return p.status==="nao_tem" || p.status==="indefinida"; })) txt = '<span class="muted">sem parcelas</span>';
+  else txt = '<span class="pill pill-ok">recebido</span>';
+  return txt + (indef.length? ' <span class="muted" style="font-size:11.5px;">('+indef.map(function(p){ return 'P'+p.n; }).join(", ")+' sem definir)</span>' : '');
 }
 function resumoVitalicioHtml(c){
   var v = vitalicioDoCliente(c, state.params);
-  if(v.presumido) return '<span class="muted">? (supondo '+fmtPct(v.pct)+')</span>';
+  if(v.presumido) return '<span class="muted">não informado</span>';
   return v.tem ? '<span class="pill pill-ok">sim · '+fmtPct(v.pct)+'</span>' : '<span class="pill pill-muted">não</span>';
 }
 async function salvarComissaoCfg(cliente, cfg, extra){
@@ -1615,11 +1613,12 @@ function comissaoCfgFormHtml(c){
   var vitSel = (cfg.vitalicio === true) ? "sim" : (cfg.vitalicio === false ? "nao" : "");
   var pctAtual = c.comissao_vitalicio_pct != null ? c.comissao_vitalicio_pct : (state.params.percentual_vitalicio||0)*100;
   return '<fieldset><legend>Comissão deste contrato (o que já entrou e o que falta)</legend>'+
-    '<div class="helpbox" style="margin-bottom:8px;">Marque o que <b>já recebeu</b> e o que <b>ainda vai receber</b>. Só o que está "A receber" e o vitalício entram no fluxo de caixa — nada aqui lança dinheiro no financeiro.</div>'+
+    '<div class="helpbox" style="margin-bottom:8px;">Tudo aqui é <b>manual</b>: marque o que <b>já recebeu</b> e o que <b>ainda vai receber</b>, com o mês. Só entra no fluxo de caixa a parcela marcada "A receber" e o vitalício marcado "Sim" — o que estiver "— definir —" fica de fora. Nada aqui lança dinheiro no financeiro.</div>'+
     '<div class="rowflex" style="margin-bottom:8px;"><button type="button" class="btn btn-ghost btn-sm" id="cc-300-ok">✓ Já recebi os '+(nParcelasCheias()*100)+'% (só vitalício daqui pra frente)</button></div>'+
     ps.map(function(p){
-      return '<div class="field row2" style="align-items:end;"><div class="field"><label>Parcela '+p.n+(p.presumido? ' <span class="muted">(estimado)</span>' : '')+'</label><select id="cc-p'+p.n+'-status">'+
-        COMISSAO_STATUS.map(function(o){ return '<option value="'+o[0]+'"'+(p.status===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select></div>'+
+      var stSel = p.status==="indefinida" ? "" : p.status;
+      return '<div class="field row2" style="align-items:end;"><div class="field"><label>Parcela '+p.n+'</label><select id="cc-p'+p.n+'-status">'+
+        COMISSAO_STATUS.map(function(o){ return '<option value="'+o[0]+'"'+(stSel===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select></div>'+
         '<div class="field"><label>Mês previsto / recebido</label><input type="month" id="cc-p'+p.n+'-mes" value="'+escapeHtml(p.mes||"")+'"></div></div>';
     }).join("")+
     '<div class="field row3" style="margin-top:6px;"><div class="field"><label>Tem vitalício?</label><select id="cc-vit"><option value=""'+(vitSel===""?' selected':'')+'>Não informado</option><option value="sim"'+(vitSel==="sim"?' selected':'')+'>Sim</option><option value="nao"'+(vitSel==="nao"?' selected':'')+'>Não</option></select></div>'+
@@ -1639,7 +1638,7 @@ function wireComissaoCfgForm(cliente, reabrir){
   if(bs) bs.onclick = async function(){
     var cfg = Object.assign({}, comissaoCfg(cliente) || {});
     for(var i=1;i<=nParcelasCheias();i++){
-      cfg["p"+i] = {status: document.getElementById("cc-p"+i+"-status").value, mes: document.getElementById("cc-p"+i+"-mes").value || null};
+      cfg["p"+i] = {status: document.getElementById("cc-p"+i+"-status").value || null, mes: document.getElementById("cc-p"+i+"-mes").value || null};
     }
     var vit = document.getElementById("cc-vit").value;
     cfg.vitalicio = vit==="" ? null : (vit==="sim");
@@ -1667,7 +1666,7 @@ function viewFinanceiroFluxo(){
     tile("Próximos 3 meses", fmtMoney(linhas.slice(0,3).reduce(function(s,l){ return s+l.d.total; },0)), "líquido")+
     tile("Parcelas cheias a receber", fmtMoney(aReceber), atrasadas? atrasadas+" parcela(s) atrasada(s)" : "nenhuma atrasada")+
     tile("Vitalício por mês (hoje)", fmtMoney(linhas[0].d.vitalicio), "carteira recorrente")+
-    tile("Clientes a conferir", naoConferidos, naoConferidos? "comissão ainda estimada — confira abaixo" : "tudo conferido ✓")+
+    tile("Clientes a definir", naoConferidos, naoConferidos? "ficam fora da previsão até você marcar" : "tudo definido ✓")+
   '</div>';
   var tabela = '<div class="card"><div class="card-head"><h2>Fluxo de caixa de comissões — próximos 12 meses</h2><div class="meta">líquido de '+fmtPct(p.taxa_imposto||0)+' de imposto</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
     '<th>Mês</th><th class="num">Parcelas cheias</th><th class="num">Vitalício</th><th class="num">Total previsto</th>'+(meta? '<th class="num">Meta</th><th class="num">Diferença</th>' : '')+'</tr></thead><tbody>'+
@@ -1677,7 +1676,7 @@ function viewFinanceiroFluxo(){
         (meta? '<td class="num">'+fmtMoney(meta)+'</td><td class="num" style="color:'+(diff<0?'var(--danger)':'var(--success)')+'">'+fmtMoney(diff)+'</td>' : '')+'</tr>';
     }).join("")+
     '<tr><td><b>Total 12 meses</b></td><td class="num">'+fmtMoney(linhas.reduce(function(s,l){ return s+l.d.parcelas+l.d.bonus; },0))+'</td><td class="num">'+fmtMoney(linhas.reduce(function(s,l){ return s+l.d.vitalicio; },0))+'</td><td class="num"><b>'+fmtMoney(linhas.reduce(function(s,l){ return s+l.d.total; },0))+'</b></td>'+(meta? '<td class="num">'+fmtMoney(meta*12)+'</td><td></td>' : '')+'</tr>'+
-    '</tbody></table></div><div class="muted" style="font-size:12px;margin-top:8px;">Parcela "A receber" com mês já passado entra no mês atual (atrasada). Clientes ainda não conferidos entram pela regra padrão: parcelas nos 3 meses a partir do fechamento e vitalício de '+fmtPct(p.percentual_vitalicio||0)+' depois disso. Vendas que ainda estão na Implantação aparecem nos Relatórios.</div></div></div>';
+    '</tbody></table></div><div class="muted" style="font-size:12px;margin-top:8px;">Só entra o que você marcou à mão: parcela "A receber" (no mês escolhido; se o mês já passou, entra no mês atual como atrasada) e vitalício "Sim". Cliente ainda sem definição não entra. Vendas que ainda estão na Implantação aparecem nos Relatórios.</div></div></div>';
   return tiles + tabela;
 }
 
@@ -1694,15 +1693,15 @@ function viewFinanceiro(){
   var hoje = todayMonthKey();
   var filtros = '<div class="funil-filterbar">'+
     '<div class="field grow"><label>Buscar cliente</label><input id="fin-busca" placeholder="Nome, razão social ou CNPJ" value="'+escapeHtml(finFiltro.busca)+'"></div>'+
-    '<label class="rowflex" style="font-weight:400;font-size:12.5px;padding-bottom:9px;white-space:nowrap;"><input type="checkbox" id="fin-pendentes" '+(finFiltro.pendentes?'checked':'')+'> só os que faltam conferir</label>'+
+    '<label class="rowflex" style="font-weight:400;font-size:12.5px;padding-bottom:9px;white-space:nowrap;"><input type="checkbox" id="fin-pendentes" '+(finFiltro.pendentes?'checked':'')+'> só os que faltam definir</label>'+
   '</div>';
-  var tabela = '<div class="card"><div class="card-head"><h2>Comissão por cliente</h2><div class="meta">'+lista.length+' de '+todos.length+' · marque o que já recebeu e se tem vitalício</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
+  var tabela = '<div class="card"><div class="card-head"><h2>Comissão por cliente</h2><div class="meta">'+lista.length+' de '+todos.length+' · tudo manual: marque o que já recebeu, o que falta e se tem vitalício</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
     '<th style="min-width:200px;">Cliente</th><th class="num">Valor contrato</th><th>Fechamento</th><th>300%</th><th>Vitalício</th><th class="num">Previsto '+monthLabel(hoje)+'</th><th class="num">Lançado</th><th>Status</th><th></th>'+
     '</tr></thead><tbody>'+
     lista.map(function(c){
       var cfg = comissaoCfg(c) || {}, vitSel = cfg.vitalicio===true ? "sim" : (cfg.vitalicio===false ? "nao" : "");
       var prev = comissaoClienteNoMes(c, hoje, state.params);
-      var falta = parcelasComissaoCliente(c, state.params).some(function(p){ return p.status==="a_receber"; });
+      var falta = parcelasComissaoCliente(c, state.params).some(function(p){ return p.status==="a_receber" || p.status==="indefinida"; });
       return '<tr>'+
         '<td><b>'+escapeHtml(clienteLabel(c))+'</b>'+(c.titular_nome && c.razao_social? '<div class="muted" style="font-size:12px;">'+escapeHtml(c.titular_nome)+'</div>' : '')+'</td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(c.valor_contrato_total)+'</td>'+
@@ -1711,7 +1710,7 @@ function viewFinanceiro(){
         '<td><select class="fin-vit-rapido" data-fin-vit="'+c.id+'" style="min-width:96px;"><option value=""'+(vitSel===""?' selected':'')+'>?</option><option value="sim"'+(vitSel==="sim"?' selected':'')+'>Sim</option><option value="nao"'+(vitSel==="nao"?' selected':'')+'>Não</option></select></td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(prev.parcelas+prev.bonus+prev.vitalicio)+'</td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(totalComissoesCliente(c.id))+'</td>'+
-        '<td>'+(c.status==="Cancelado"? '<span class="pill pill-bad">cancelado</span>' : (c.baixado_financeiro? '<span class="pill pill-muted">baixado</span>' : (comissaoConferida(c)? '<span class="pill pill-ok">conferido</span>' : '<span class="pill pill-warn">a conferir</span>')))+'</td>'+
+        '<td>'+(c.status==="Cancelado"? '<span class="pill pill-bad">cancelado</span>' : (c.baixado_financeiro? '<span class="pill pill-muted">baixado</span>' : (comissaoConferida(c)? '<span class="pill pill-ok">definido</span>' : '<span class="pill pill-warn">a definir</span>')))+'</td>'+
         '<td><button class="linklike" data-abrir-financeiro-cliente="'+c.id+'">abrir</button></td>'+
       '</tr>';
     }).join("")+
