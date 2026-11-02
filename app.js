@@ -535,6 +535,7 @@ var NAV = [
   {id:"painel", label:"Painel", icon:"grid"},
   {id:"clientes", label:"Clientes", icon:"users"},
   {id:"funil", label:"Funil Comercial", icon:"filter"},
+  {id:"retornos", label:"Contatos futuros", icon:"clock"},
   {id:"relatorios", label:"Relatórios", icon:"chart"},
   {id:"empresas", label:"Empresas", icon:"building"},
   {id:"implantacao", label:"Implantação", icon:"flag"},
@@ -556,12 +557,13 @@ var ICONS = {
   flag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4"/><path d="M5 4h13l-3 4.5L18 13H5"/></svg>',
   building:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16"/><path d="M15 9h4a1 1 0 0 1 1 1v11"/><path d="M3 21h18M8 8h3M8 12h3M8 16h3"/></svg>',
   chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   receipt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>'
 };
 var NAV_GRUPOS = [
   {nome:null, itens:["painel"]},
   {nome:null, itens:["clientes"]},
-  {nome:null, itens:["funil","relatorios","empresas"]},
+  {nome:null, itens:["funil","retornos","relatorios","empresas"]},
   {nome:null, itens:["implantacao"]},
   {nome:"Concierge", itens:["tarefas","agenda","posvenda"]},
   {nome:"Gestão", itens:["financeiro","parametros"]}
@@ -605,6 +607,7 @@ function render(){
   else if(state.tab==="clientes") main.innerHTML = viewClientes();
   else if(state.tab==="funil") main.innerHTML = viewFunil();
   else if(state.tab==="empresas") main.innerHTML = viewEmpresas();
+  else if(state.tab==="retornos") main.innerHTML = viewRetornos();
   else if(state.tab==="relatorios") main.innerHTML = podeVerRelatorios()? viewRelatorios() : '<div class="empty">Você não tem acesso a este setor.</div>';
   else if(state.tab==="implantacao") main.innerHTML = viewImplantacao();
   else if(state.tab==="tarefas") main.innerHTML = viewTarefas();
@@ -2107,8 +2110,13 @@ function requestEtapaChange(leadId, novaEtapa, onCancel, onDone){
   var lead = state.leads.filter(function(l){ return l.id===leadId; })[0];
   if(!lead) return;
   if(novaEtapa==="Perdido" && lead.etapa!=="Perdido"){
-    openMotivoPerdaModal(lead, function(motivo){
-      setLeadEtapa(leadId, novaEtapa, motivo).then(function(){ if(onDone) onDone(); });
+    openMotivoPerdaModal(lead, function(motivo, retorno){
+      setLeadEtapa(leadId, novaEtapa, motivo).then(function(ok){
+        if(ok && retorno && retorno.data){
+          var atual = state.leads.filter(function(l){ return l.id===leadId; })[0] || lead;
+          return agendarRetorno(atual, retorno.data, retorno.obs);
+        }
+      }).then(function(){ if(onDone) onDone(); });
     }, onCancel);
   } else {
     setLeadEtapa(leadId, novaEtapa).then(function(){ if(onDone) onDone(); });
@@ -2118,14 +2126,17 @@ function openMotivoPerdaModal(lead, onConfirm, onCancel){
   var body = '<div class="field"><label>Motivo da perda</label><select id="mp-motivo">'+
       MOTIVOS_PERDA.map(function(m){ return '<option>'+m+'</option>'; }).join("")+
     '</select></div>'+
-    '<div class="field" id="mp-outro-wrap" style="display:none;"><label>Qual motivo?</label><input id="mp-outro"></div>';
+    '<div class="field" id="mp-outro-wrap" style="display:none;"><label>Qual motivo?</label><input id="mp-outro"></div>'+
+    retornoCamposHtml("mpr", lead.retomar_em, lead.retomar_obs, true);
   openModal("Motivo da perda — "+(lead.nome||lead.empresa||"negócio"), body, function(closeFn){
     var sel = document.getElementById("mp-motivo").value;
     var outroEl = document.getElementById("mp-outro");
     var motivo = sel==="Outro" ? (outroEl? outroEl.value.trim() : "") : sel;
+    var retorno = lerRetornoCampos("mpr");
     closeFn();
-    onConfirm(motivo);
+    onConfirm(motivo, retorno);
   }, "Marcar como perdido");
+  wireRetornoCampos("mpr");
   var sel = document.getElementById("mp-motivo");
   var wrap = document.getElementById("mp-outro-wrap");
   if(sel && wrap){ sel.addEventListener("change", function(){ wrap.style.display = sel.value==="Outro" ? "" : "none"; }); }
@@ -2318,6 +2329,7 @@ function viewFunilKanban(byEtapa, agoraISO){
           '<div class="muted">'+escapeHtml(l.produto||"—")+' · '+escapeHtml(l.vendedor||"—")+'</div>'+
           '<div class="rowflex" style="margin-top:4px;gap:6px;">'+
             (operadoraTag(l)||'')+
+            (l.etapa==="Perdido" && l.retomar_em? '<span class="tag" title="Retomar contato">↻ '+fmtDateISO(l.retomar_em)+'</span>' : '')+
             (parado>LIMITE_DIAS_PARADO? '<span class="badge-stale">🔥 parado '+parado+'d</span>' : '')+
           '</div>'+
           '<div style="margin-top:4px;font-weight:600;">'+fmtMoney(l.valor_estimado)+'</div>'+
@@ -2656,6 +2668,7 @@ function openLeadDetailPanel(leadId){
     '</div>'+
     '<div class="side-panel-body">'+
       contatoLeadHtml(lead)+
+      retornoSecaoPainelHtml(lead)+
       '<div class="side-panel-section">'+
         '<h4>Negócio</h4>'+
         '<div class="kv-list">'+
@@ -2698,6 +2711,7 @@ function openLeadDetailPanel(leadId){
   document.getElementById("panel-close").onclick = closeLeadDetailPanel;
   document.getElementById("panel-backdrop").addEventListener("click", function(e){ if(e.target.id==="panel-backdrop") closeLeadDetailPanel(); });
   document.getElementById("panel-edit-lead").onclick = function(){ openLeadModal(lead, function(id){ openLeadDetailPanel(id||leadId); }); };
+  wireRetornoPainel(lead);
   document.getElementById("panel-add-atividade").onclick = function(){ openLeadTarefaModal(lead, function(){ openLeadDetailPanel(leadId); }); };
   var addContato = document.getElementById("panel-add-contato");
   if(addContato) addContato.onclick = function(){ openLeadModal(lead, function(id){ openLeadDetailPanel(id||leadId); }); };
@@ -3519,6 +3533,197 @@ function wireRelatorios(){
   });
 }
 
+/* ================= CONTATOS FUTUROS (retomar leads perdidos) =================
+   Um lead "Perdido" pode ganhar uma data para retomar o contato (leads.retomar_em +
+   leads.retomar_obs). Ao agendar, cria uma tarefa "Retomar contato" para o vendedor no dia
+   (aparece no sino e nas tarefas do funil). A aba "Contatos futuros" lista esses leads por
+   data. "Nova oportunidade" cria um negócio NOVO no funil a partir do contato (o perdido
+   antigo continua perdido, para não bagunçar conversão e relatórios) e marca o antigo como
+   retomado (leads.retomado_em). */
+var RETORNO_ATALHOS = [[2,"2 meses"],[3,"3 meses"],[4,"4 meses"],[6,"6 meses"],[12,"1 ano"]];
+var RETORNO_TITULO = "Retomar contato";
+var retornoFiltro = {busca:"", vendedor:""};
+function retornoCamposHtml(prefixo, dataISO, obs, opcional){
+  return '<fieldset style="margin-top:10px;"><legend>Retomar contato no futuro'+(opcional? ' (opcional)' : '')+'</legend>'+
+    '<div class="rowflex" style="gap:6px;flex-wrap:wrap;">'+
+      RETORNO_ATALHOS.map(function(a){ return '<button type="button" class="btn btn-ghost btn-sm" data-'+prefixo+'-meses="'+a[0]+'">'+a[1]+'</button>'; }).join("")+
+    '</div>'+
+    '<div class="field row2"><div class="field"><label>Data para retomar</label><input type="date" id="'+prefixo+'-data" value="'+escapeHtml((dataISO||"").slice(0,10))+'"></div>'+
+      '<div class="field"><label>&nbsp;</label><span class="muted" id="'+prefixo+'-quando" style="font-size:12px;padding-top:9px;"></span></div></div>'+
+    '<div class="field"><label>O que combinou / o que falar</label><input id="'+prefixo+'-obs" value="'+escapeHtml(obs||"")+'" placeholder="ex: Dr. pediu para ligar em março; avisar quando tiver campanha Amil"></div>'+
+    (opcional? '<div class="muted" style="font-size:11.5px;">Deixe a data em branco se não for retomar. Com data, o lead aparece em "Contatos futuros" e vira uma tarefa no dia.</div>' : '')+
+  '</fieldset>';
+}
+function retornoDiasTexto(dataISO){
+  if(!dataISO) return "";
+  var d = daysBetween(todayISO(), String(dataISO).slice(0,10));
+  if(d===0) return "hoje";
+  if(d<0) return "há "+(-d)+" dia"+(d===-1?"":"s")+" (atrasado)";
+  if(d<60) return "em "+d+" dia"+(d===1?"":"s");
+  return "em ~"+Math.round(d/30)+" meses";
+}
+function wireRetornoCampos(prefixo){
+  var data = document.getElementById(prefixo+"-data"), quando = document.getElementById(prefixo+"-quando");
+  function atualiza(){ if(quando) quando.textContent = data && data.value ? retornoDiasTexto(data.value) : ""; }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-"+prefixo+"-meses]"), function(b){
+    b.onclick = function(){ data.value = addMonthsISO(todayISO(), parseInt(b.getAttribute("data-"+prefixo+"-meses"),10)); atualiza(); };
+  });
+  if(data) data.addEventListener("change", atualiza);
+  atualiza();
+}
+function lerRetornoCampos(prefixo){
+  var d = document.getElementById(prefixo+"-data"), o = document.getElementById(prefixo+"-obs");
+  return {data: d && d.value ? d.value : null, obs: o ? o.value.trim() : ""};
+}
+function tarefasRetornoAbertas(leadId){
+  return state.tarefas.filter(function(t){ return t.lead_id===leadId && t.status!=="Concluída" && String(t.titulo||"").indexOf(RETORNO_TITULO)===0; });
+}
+async function agendarRetorno(lead, dataISO, obs){
+  var r = await sb.from("leads").update({retomar_em: dataISO, retomar_obs: obs || null}).eq("id", lead.id);
+  if(r.error){
+    console.error(r.error);
+    toast(/retomar_/.test(r.error.message||"") ? "Falta a atualização do banco (contatos futuros)." : "Erro ao agendar: "+r.error.message);
+    return false;
+  }
+  var antigas = tarefasRetornoAbertas(lead.id);
+  for(var i=0;i<antigas.length;i++){ await sb.from("tarefas").delete().eq("id", antigas[i].id); }
+  if(dataISO){
+    var venc = new Date(dataISO+"T09:00:00");
+    await sb.from("tarefas").insert({
+      tipo:"Tarefa", titulo: RETORNO_TITULO+" — "+(lead.nome||lead.empresa||"lead"),
+      responsavel: lead.vendedor || currentUserName() || "Henrique", lead_id: lead.id, canal: "Ligar",
+      vencimento_em: venc.toISOString(), data_vencimento: dataISO, status: "Pendente",
+      descricao: obs || ("Lead perdido por: "+(lead.motivo_perda||"—")), criado_por: currentUser()
+    });
+  }
+  await reload("tarefas");
+  await reload("leads");
+  toast(dataISO ? "Retorno agendado para "+fmtDateISO(dataISO)+"." : "Retorno removido.");
+  return true;
+}
+function openRetornoModal(lead, onDone){
+  openModal((lead.retomar_em? "Adiar retorno — " : "Agendar retorno — ")+(lead.nome||lead.empresa||"lead"),
+    (lead.motivo_perda? '<div class="muted" style="margin-bottom:6px;">Perdido por: <b>'+escapeHtml(lead.motivo_perda)+'</b></div>' : '')+
+    retornoCamposHtml("rt", lead.retomar_em, lead.retomar_obs, false),
+    async function(fechar){
+      var r = lerRetornoCampos("rt");
+      if(!r.data){ toast("Escolha a data para retomar."); return; }
+      var ok = await agendarRetorno(lead, r.data, r.obs);
+      if(ok){ fechar(); if(onDone) onDone(); else render(); }
+    }, "Salvar retorno");
+  wireRetornoCampos("rt");
+}
+async function descartarRetorno(lead){
+  if(!confirm('Tirar "'+(lead.nome||lead.empresa||"este lead")+'" dos contatos futuros? Ele continua como perdido no funil.')) return;
+  await agendarRetorno(lead, null, lead.retomar_obs);
+}
+function novaOportunidadeDoRetorno(lead){
+  var seed = {
+    etapa:"Qualificação", produto: lead.produto || "Saúde", vendedor: lead.vendedor || "Henrique",
+    nome: lead.nome || "", empresa: lead.empresa || "", telefone: lead.telefone || "", email: lead.email || "",
+    idades: lead.idades || [], quantidade_vidas: lead.quantidade_vidas || null, operadora: lead.operadora || "",
+    categoria_plano: lead.categoria_plano || "", valor_estimado: lead.valor_estimado || null,
+    origem: "Contato futuro" + (lead.origem? " ("+lead.origem+")" : ""),
+    observacoes: ["Retomado de um lead perdido em "+fmtDateISO(lead.etapa_atualizada_em || lead.criado_em)+(lead.motivo_perda? " — motivo: "+lead.motivo_perda : ""), lead.retomar_obs||"", lead.observacoes||""].filter(Boolean).join("\n"),
+    empresa_id: lead.empresa_id || null
+  };
+  openLeadModal(null, async function(novoId){
+    await sb.from("leads").update({retomar_em: null, retomado_em: new Date().toISOString()}).eq("id", lead.id);
+    var abertas = tarefasRetornoAbertas(lead.id);
+    for(var i=0;i<abertas.length;i++){ await sb.from("tarefas").update({status:"Concluída"}).eq("id", abertas[i].id); }
+    await reload("tarefas"); await reload("leads");
+    toast("Nova oportunidade criada no Funil Comercial.");
+    if(novoId) openLeadDetailPanel(novoId);
+  }, seed);
+}
+function retornoSecaoPainelHtml(lead){
+  if(lead.etapa!=="Perdido") return "";
+  return '<div class="side-panel-section"><h4>Contato futuro</h4>'+
+    (lead.retomar_em?
+      '<div class="kv-list"><div class="kv-row"><span class="k">Retomar em</span><span><b>'+fmtDateISO(lead.retomar_em)+'</b> <span class="muted">'+retornoDiasTexto(lead.retomar_em)+'</span></span></div>'+
+        (lead.retomar_obs? '<div class="kv-row"><span class="k">Combinado</span><span>'+escapeHtml(lead.retomar_obs)+'</span></div>' : '')+'</div>'+
+      '<div class="rowflex" style="gap:10px;"><button class="linklike" id="panel-retorno-editar">adiar / alterar</button><button class="linklike" id="panel-retorno-nova">criar nova oportunidade</button></div>'
+    : '<div class="muted">Sem data para retomar.</div><button class="linklike" id="panel-retorno-editar" style="justify-self:start;">+ agendar retorno</button>')+
+  '</div>';
+}
+function wireRetornoPainel(lead){
+  var ed = document.getElementById("panel-retorno-editar");
+  if(ed) ed.onclick = function(){ openRetornoModal(lead, function(){ openLeadDetailPanel(lead.id); }); };
+  var nv = document.getElementById("panel-retorno-nova");
+  if(nv) nv.onclick = function(){ closeLeadDetailPanel(); novaOportunidadeDoRetorno(lead); };
+}
+function retornosFiltrados(lista){
+  var q = (retornoFiltro.busca||"").toLowerCase(), v = retornoFiltro.vendedor;
+  return lista.filter(function(l){
+    if(v && l.vendedor!==v) return false;
+    if(q && ((l.nome||"")+" "+(l.empresa||"")+" "+(l.telefone||"")+" "+(l.retomar_obs||"")).toLowerCase().indexOf(q)===-1) return false;
+    return true;
+  });
+}
+function retornoLinhaHtml(l){
+  var wa = linkWhatsApp(l.telefone);
+  var atrasado = l.retomar_em && String(l.retomar_em).slice(0,10) < todayISO();
+  return '<tr>'+
+    '<td style="white-space:nowrap;"><b>'+(l.retomar_em? fmtDateISO(l.retomar_em) : '—')+'</b><div class="muted" style="font-size:12px;'+(atrasado?'color:var(--danger);':'')+'">'+retornoDiasTexto(l.retomar_em)+'</div></td>'+
+    '<td><button class="linklike" style="text-align:left;" data-retorno-abrir="'+l.id+'"><b>'+escapeHtml(l.nome||l.empresa||"—")+'</b></button>'+(l.empresa && l.nome? '<div class="muted" style="font-size:12px;">'+escapeHtml(l.empresa)+'</div>' : '')+'</td>'+
+    '<td style="white-space:nowrap;">'+(l.telefone? (wa? '<a class="linklike" href="'+wa+'" target="_blank" rel="noopener">'+escapeHtml(l.telefone)+'</a>' : escapeHtml(l.telefone)) : '<span class="muted">—</span>')+'</td>'+
+    '<td>'+escapeHtml(l.vendedor||"—")+'</td>'+
+    '<td>'+escapeHtml(l.motivo_perda||"—")+'</td>'+
+    '<td style="max-width:280px;font-size:12.5px;">'+(l.retomar_obs? escapeHtml(l.retomar_obs) : '<span class="muted">—</span>')+'</td>'+
+    '<td style="white-space:nowrap;">'+
+      (l.retomar_em?
+        '<button class="linklike" data-retorno-nova="'+l.id+'">nova oportunidade</button> · <button class="linklike" data-retorno-adiar="'+l.id+'">adiar</button> · <button class="linklike" data-retorno-descartar="'+l.id+'" style="color:var(--danger);">tirar</button>'
+        : '<button class="linklike" data-retorno-adiar="'+l.id+'">+ agendar retorno</button>')+
+    '</td></tr>';
+}
+function retornoTabelaHtml(lista){
+  return '<div class="tablewrap"><table class="grid"><thead><tr><th>Retomar em</th><th>Lead</th><th>Telefone</th><th>Vendedor(a)</th><th>Perdido por</th><th>Combinado</th><th></th></tr></thead><tbody>'+
+    lista.map(retornoLinhaHtml).join("")+'</tbody></table></div>';
+}
+function viewRetornos(){
+  var hoje = todayISO(), mesAtual = todayMonthKey();
+  var agendados = state.leads.filter(function(l){ return l.etapa==="Perdido" && l.retomar_em; })
+    .sort(function(a,b){ return String(a.retomar_em) < String(b.retomar_em) ? -1 : 1; });
+  var semData = state.leads.filter(function(l){ return l.etapa==="Perdido" && !l.retomar_em && !l.retomado_em; });
+  var lista = retornosFiltrados(agendados);
+  var atrasados = lista.filter(function(l){ return String(l.retomar_em).slice(0,10) < hoje; });
+  var futuros = lista.filter(function(l){ return String(l.retomar_em).slice(0,10) >= hoje; });
+  var esteMes = futuros.filter(function(l){ return monthKeyFromISO(l.retomar_em)===mesAtual; });
+  var em90 = futuros.filter(function(l){ return daysBetween(hoje, String(l.retomar_em).slice(0,10)) <= 90; });
+  var header = '<div class="topbar"><div><h1>Contatos futuros</h1><div class="desc">Leads perdidos com data combinada para voltar a falar · cada um vira uma tarefa no dia do retorno</div></div></div>';
+  var tiles = '<div class="tiles">'+
+    tile("Atrasados", atrasados.length, atrasados.length? "já passou da data — ligar" : "nenhum atrasado")+
+    tile("Este mês", esteMes.length, monthLabel(mesAtual))+
+    tile("Próximos 90 dias", em90.length, "")+
+    tile("Total agendado", lista.length, semData.length? semData.length+" perdido(s) sem data" : "")+
+  '</div>';
+  var filtros = '<div class="funil-filterbar">'+
+    '<div class="field grow"><label>Buscar</label><input id="rt-busca" placeholder="Nome, empresa, telefone ou observação" value="'+escapeHtml(retornoFiltro.busca)+'"></div>'+
+    '<div class="field"><label>Vendedor(a)</label><select id="rt-vendedor"><option value="">Todos</option>'+VENDEDORES.map(function(v){ return '<option'+(retornoFiltro.vendedor===v?' selected':'')+'>'+v+'</option>'; }).join("")+'</select></div>'+
+  '</div>';
+  var blocos = "";
+  if(atrasados.length) blocos += '<div class="card"><div class="card-head"><h2>⏰ Atrasados</h2><div class="meta">'+atrasados.length+'</div></div><div class="card-body">'+retornoTabelaHtml(atrasados)+'</div></div>';
+  var porMes = {}; futuros.forEach(function(l){ var mk = monthKeyFromISO(l.retomar_em); (porMes[mk] = porMes[mk] || []).push(l); });
+  Object.keys(porMes).sort().forEach(function(mk){
+    blocos += '<div class="card"><div class="card-head"><h2>'+monthLabel(mk)+(mk===mesAtual? ' <span class="tag">este mês</span>' : '')+'</h2><div class="meta">'+porMes[mk].length+'</div></div><div class="card-body">'+retornoTabelaHtml(porMes[mk])+'</div></div>';
+  });
+  if(!lista.length) blocos += '<div class="card"><div class="card-body"><div class="empty">Nenhum contato futuro agendado'+(retornoFiltro.busca||retornoFiltro.vendedor? ' com esses filtros' : '')+'. Ao marcar um negócio como "Perdido" no funil, preencha "Retomar contato em" — ou use "+ agendar retorno" nos perdidos abaixo.</div></div></div>';
+  var semDataF = retornosFiltrados(semData);
+  if(semDataF.length) blocos += '<div class="card"><div class="card-head"><h2>Perdidos sem data de retorno</h2><div class="meta">'+semDataF.length+' · agende os que valem uma nova tentativa</div></div><div class="card-body">'+retornoTabelaHtml(semDataF)+'</div></div>';
+  return header + tiles + filtros + blocos;
+}
+function wireRetornos(){
+  if(state.tab!=="retornos") return;
+  var busca = document.getElementById("rt-busca");
+  if(busca) busca.oninput = function(){ retornoFiltro.busca = busca.value; render(); var el = document.getElementById("rt-busca"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } };
+  var vend = document.getElementById("rt-vendedor"); if(vend) vend.onchange = function(){ retornoFiltro.vendedor = vend.value; render(); };
+  function leadDe(el, attr){ var id = el.getAttribute(attr); return state.leads.filter(function(x){ return x.id===id; })[0]; }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-retorno-abrir]"), function(b){ b.onclick = function(){ openLeadDetailPanel(b.getAttribute("data-retorno-abrir")); }; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-retorno-adiar]"), function(b){ b.onclick = function(){ var l = leadDe(b, "data-retorno-adiar"); if(l) openRetornoModal(l); }; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-retorno-nova]"), function(b){ b.onclick = function(){ var l = leadDe(b, "data-retorno-nova"); if(l) novaOportunidadeDoRetorno(l); }; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-retorno-descartar]"), function(b){ b.onclick = function(){ var l = leadDe(b, "data-retorno-descartar"); if(l) descartarRetorno(l); }; });
+}
+
 /* ================= IMPLANTAÇÃO ================= */
 function clienteDoLead(leadId){ return state.clientes.filter(function(c){ return c.lead_id===leadId; })[0]; }
 function implantacaoDoLead(leadId){ return state.implantacoes.filter(function(i){ return i.lead_id===leadId; })[0]; }
@@ -4213,6 +4418,7 @@ function viewParametros(){
 function wireActions(){
   wireMoneyInputs(document);
   wireEmpresas();
+  wireRetornos();
   wireRelatorios();
   var btnRel = document.getElementById("btn-relatorios"); if(btnRel) btnRel.onclick = function(){ state.tab = "relatorios"; render(); window.scrollTo(0,0); };
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
