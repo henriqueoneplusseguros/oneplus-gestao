@@ -1692,7 +1692,7 @@ function viewFinanceiroFluxo(){
 }
 
 function viewFinanceiro(){
-  var header = '<div class="topbar"><div><h1>Financeiro</h1><div class="desc">Acesso restrito (Henrique e Kelly) · fluxo de caixa de comissões, comissão por cliente, recebimentos e baixa</div></div></div>';
+  var header = '<div class="topbar"><div><h1>Financeiro</h1><div class="desc">Acesso restrito (Henrique e Kelly) · fluxo de caixa de comissões, comissão por cliente, recebimentos e baixa</div></div><button class="btn btn-primary" id="fin-importar-extrato">📄 Importar extrato da operadora</button></div>';
   var todos = state.clientes.slice().sort(function(a,b){ return clienteLabel(a).localeCompare(clienteLabel(b)); });
   if(!todos.length) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum cliente cadastrado ainda.</div></div></div>';
   var q = (finFiltro.busca||"").toLowerCase();
@@ -1717,7 +1717,7 @@ function viewFinanceiro(){
         '<td><b>'+escapeHtml(clienteLabel(c))+'</b>'+(c.titular_nome && c.razao_social? '<div class="muted" style="font-size:12px;">'+escapeHtml(c.titular_nome)+'</div>' : '')+'</td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(c.valor_contrato_total)+'</td>'+
         '<td style="white-space:nowrap;">'+(c.vigencia_inicio? fmtDateISO(c.vigencia_inicio) : '<span class="muted" title="Fechamento">fech. '+fmtDateISO(c.data_fechamento || c.data_inclusao)+'</span>')+'</td>'+
-        '<td style="white-space:nowrap;">'+resumo300Html(c)+(falta? ' <button class="linklike" data-fin-300="'+c.id+'" title="Marcar as parcelas cheias como já recebidas">✓ recebido</button>' : '')+'</td>'+
+        '<td style="white-space:nowrap;">'+resumo300Html(c)+(falta? ' <button class="linklike" data-fin-300="'+c.id+'" title="Marcar as parcelas cheias como já recebidas">✓ recebido</button>' : '')+ultimaParcelaOperadoraHtml(c)+'</td>'+
         '<td><select class="fin-vit-rapido" data-fin-vit="'+c.id+'" style="min-width:96px;"><option value=""'+(vitSel===""?' selected':'')+'>?</option><option value="sim"'+(vitSel==="sim"?' selected':'')+'>Sim</option><option value="nao"'+(vitSel==="nao"?' selected':'')+'>Não</option></select></td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(prev.parcelas+prev.bonus+prev.vitalicio)+'</td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(totalComissoesCliente(c.id))+'</td>'+
@@ -1733,9 +1733,244 @@ function wireFinanceiro(){
   var busca = document.getElementById("fin-busca");
   if(busca) busca.oninput = function(){ finFiltro.busca = busca.value; render(); var el = document.getElementById("fin-busca"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } };
   var pend = document.getElementById("fin-pendentes"); if(pend) pend.onchange = function(){ finFiltro.pendentes = pend.checked; render(); };
+  var impExt = document.getElementById("fin-importar-extrato"); if(impExt) impExt.onclick = openImportarExtratoModal;
   function cli(id){ return state.clientes.filter(function(x){ return x.id===id; })[0]; }
   Array.prototype.forEach.call(document.querySelectorAll("[data-fin-300]"), function(b){ b.onclick = function(){ var c = cli(b.getAttribute("data-fin-300")); if(c) marcar300Recebido(c); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-fin-vit]"), function(s){ s.onchange = function(){ var c = cli(s.getAttribute("data-fin-vit")); if(c) definirVitalicioRapido(c, s.value); }; });
+}
+
+/* ================= EXTRATO DE COMISSÃO DA OPERADORA (importar PDF) =================
+   Lê o PDF do extrato (hoje: Amil — TsCms1005JR), monta as linhas, encontra o cliente de
+   cada contrato e, ao confirmar, lança em comissoes_recebidas e dá baixa nas parcelas 1-3.
+   Cada fatura vira um lançamento; a fatura fica registrada nas observações para não lançar
+   duas vezes. O nº do contrato na operadora fica guardado no cliente
+   (comissao_parcelas.contratos_operadora) para casar sozinho nos próximos meses. */
+var PDFJS_URL = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
+var PDFJS_WORKER = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+function carregarPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  return new Promise(function(ok, falha){
+    var s = document.createElement("script"); s.src = PDFJS_URL;
+    s.onload = function(){ window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; ok(window.pdfjsLib); };
+    s.onerror = function(){ falha(new Error("Não consegui carregar o leitor de PDF.")); };
+    document.head.appendChild(s);
+  });
+}
+/* Junta os pedaços de texto do PDF em linhas (mesma altura na página), da esquerda pra direita. */
+async function pdfParaLinhas(arrayBuffer, pdfjs){
+  var doc = await pdfjs.getDocument({data: arrayBuffer}).promise, linhas = [];
+  for(var p=1; p<=doc.numPages; p++){
+    var page = await doc.getPage(p), tc = await page.getTextContent(), grupos = [];
+    var vp = page.getViewport({scale:1});
+    tc.items.forEach(function(it){
+      if(!it.str || !it.str.trim()) return;
+      var t = pdfjs.Util.transform(vp.transform, it.transform); /* coordenadas da página já girada (y para baixo) */
+      var y = -t[5], x = t[4];
+      var g = null;
+      for(var i=0;i<grupos.length;i++){ if(Math.abs(grupos[i].y - y) < 2.5){ g = grupos[i]; break; } }
+      if(!g){ g = {y:y, itens:[]}; grupos.push(g); }
+      g.itens.push({x:x, s:it.str});
+    });
+    grupos.sort(function(a,b){ return b.y - a.y; });
+    grupos.forEach(function(g){ g.itens.sort(function(a,b){ return a.x - b.x; }); linhas.push(g.itens.map(function(i){ return i.s.trim(); }).join(" ")); });
+  }
+  return linhas;
+}
+function numBR(s){ return parseFloat(String(s).replace(/\./g,"").replace(",", ".")); }
+function dataBRparaISO(s){ var m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(s||""); return m ? m[3]+"-"+m[2]+"-"+m[1] : null; }
+/* Extrato Amil (TsCms1005JR). Devolve cabeçalho + uma linha por fatura. */
+function parseExtratoAmil(linhas){
+  var txt = linhas.join("\n"), cab = {operadora:"Amil"};
+  var m;
+  if((m = /N[úu]mero extrato:\s*(\d+)/.exec(txt))) cab.extrato = m[1];
+  if((m = /Per[íi]odo de apura[çc][ãa]o:\s*(\d{2}\/\d{2}\/\d{4})\s*at[ée]\s*(\d{2}\/\d{2}\/\d{4})/.exec(txt))){ cab.periodo_de = dataBRparaISO(m[1]); cab.periodo_ate = dataBRparaISO(m[2]); }
+  if((m = /Data pagamento efetivo:\s*(\d{2}\/\d{2}\/\d{4})/.exec(txt))) cab.pago_em = dataBRparaISO(m[1]);
+  if(!cab.pago_em && (m = /Data pagamento previsto:\s*(\d{2}\/\d{2}\/\d{4})/.exec(txt))) cab.pago_em = dataBRparaISO(m[1]);
+  if((m = /Total extrato:\s*([\d.]+,\d{2})/.exec(txt))) cab.total = numBR(m[1]);
+  if((m = /Valor L[íi]quido a Receber\s*([\d.]+,\d{2})/.exec(txt))) cab.liquido = numBR(m[1]);
+  var rows = [], cur = null;
+  linhas.forEach(function(l){
+    var mc = /Contrato:\s*(\d+)\s*-\s*(.+?)\s+Proposta:\s*(\d+).*?Data in[íi]cio vig[êe]ncia:\s*(\d{2}\/\d{2}\/\d{4})/.exec(l);
+    if(mc){ cur = {contrato:mc[1], nome:mc[2].trim(), proposta:mc[3], vigencia:dataBRparaISO(mc[4])}; return; }
+    var mf = /^\s*(\d{6,})\s+(\d+)\s+(\d{2})\/(\d{4})\s+([\d.]+,\d{2})\s*(M[ée]dico|Dental|Odonto\w*)\s+(\d+)\s+(\d+)\s+(\d+)\s+.*?Comiss[ãa]o\s+([\d.]+,\d{2})\s*%\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})/.exec(l);
+    if(mf && cur){
+      rows.push({contrato:cur.contrato, nome:cur.nome, proposta:cur.proposta, vigencia:cur.vigencia,
+        fatura:mf[1], parcela:parseInt(mf[2],10), referencia:mf[4]+"-"+mf[3], valor_fatura:numBR(mf[5]), produto:mf[6], vidas:parseInt(mf[9],10),
+        percentual:numBR(mf[10]), base:numBR(mf[11]), comissao:numBR(mf[12])});
+    }
+  });
+  cab.soma = Math.round(rows.reduce(function(s,r){ return s + r.comissao; }, 0)*100)/100;
+  return {cab:cab, rows:rows};
+}
+
+/* ---- casar extrato x clientes ---- */
+var EXTRATO_PARSERS = {"Amil": parseExtratoAmil};
+var extratoAtual = null;
+function nomeChave(s){ return String(s||"").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Z ]/g," ").replace(/\b(LTDA|ME|EPP|EIRELI|S A|SA)\b/g," ").replace(/\s+/g," ").trim(); }
+function clientePorContrato(contrato){
+  return state.clientes.filter(function(c){ var cfg = comissaoCfg(c); return cfg && Array.isArray(cfg.contratos_operadora) && cfg.contratos_operadora.indexOf(String(contrato))>=0; })[0] || null;
+}
+function clientePorNome(nome){
+  var k = nomeChave(nome); if(k.length < 5) return null;
+  var hits = state.clientes.filter(function(c){
+    var a = nomeChave(c.razao_social), b = nomeChave(c.titular_nome);
+    return (a && (a.indexOf(k)>=0 || k.indexOf(a)>=0)) || (b && b.length>=5 && (b.indexOf(k)>=0 || k.indexOf(b)>=0));
+  });
+  return hits.length===1 ? hits[0] : null;
+}
+function tipoLancamentoExtrato(r){ return r.parcela <= nParcelasCheias() ? "Parcela "+r.parcela : "Vitalício"; }
+function extratoJaLancado(r){
+  return state.comissoes_recebidas.some(function(x){ return (x.observacoes||"").indexOf("fatura "+r.fatura)>=0; });
+}
+function extratoPossivelDuplicado(r, cli){
+  if(!cli) return false;
+  var tipo = tipoLancamentoExtrato(r);
+  return state.comissoes_recebidas.some(function(x){ return x.cliente_id===cli.id && x.parcela===tipo && Math.abs((x.valor||0) - r.comissao) < 0.01; });
+}
+function prepararExtrato(parsed){
+  parsed.rows.forEach(function(r, i){
+    r.idx = i;
+    var porContrato = clientePorContrato(r.contrato);
+    r.cliente = porContrato || clientePorNome(r.nome);
+    r.casamento = porContrato ? "contrato" : (r.cliente ? "nome" : "");
+    r.tipo = tipoLancamentoExtrato(r);
+    r.jaLancado = extratoJaLancado(r);
+    r.duplicado = !r.jaLancado && extratoPossivelDuplicado(r, r.cliente);
+    r.avisos = [];
+    if(r.cliente){
+      var plano = nomeChave(r.cliente.plano_nome), opAtual = nomeChave(parsed.cab.operadora);
+      var outra = OPERADORAS.filter(function(o){ var k = nomeChave(o); return o!=="Outros" && k && k!==opAtual && plano.indexOf(k)>=0; })[0];
+      if(r.casamento==="nome" && outra) r.avisos.push("no cadastro o plano é "+r.cliente.plano_nome);
+      var v = r.cliente.valor_contrato_total||0;
+      if(v && r.valor_fatura && Math.abs(v - r.valor_fatura)/r.valor_fatura > 0.05 && r.produto.indexOf("Dental")<0) r.avisos.push("valor no cadastro "+fmtMoney(v)+" × fatura "+fmtMoney(r.valor_fatura));
+    }
+    r.marcado = !!r.cliente && !r.jaLancado && !r.duplicado && !r.avisos.some(function(a){ return a.indexOf("plano é")>=0; });
+  });
+  return parsed;
+}
+function openImportarExtratoModal(){
+  var body = '<div class="helpbox">Suba o PDF do extrato de comissão da operadora. O sistema lê todas as faturas, encontra o cliente de cada contrato e mostra tudo para você conferir antes de lançar. Parcelas 1 a 3 dão baixa nas parcelas cheias; da 4ª em diante entram como vitalício.</div>'+
+    '<div class="field row2"><div class="field"><label>Operadora</label><select id="ext-op"><option>Amil</option><option disabled>SulAmérica (mande um modelo)</option><option disabled>Porto Seguro (mande um modelo)</option></select></div>'+
+    '<div class="field"><label>PDF do extrato</label><input type="file" id="ext-arquivo" accept="application/pdf"></div></div>'+
+    '<div class="muted" id="ext-status" style="font-size:12.5px;"></div>';
+  openModal("Importar extrato de comissão", body, async function(fechar){
+    var f = document.getElementById("ext-arquivo").files[0], st = document.getElementById("ext-status");
+    if(!f){ toast("Escolha o PDF do extrato."); return; }
+    var op = document.getElementById("ext-op").value;
+    try{
+      st.textContent = "Lendo o PDF…";
+      var pdfjs = await carregarPdfJs();
+      var linhas = await pdfParaLinhas(await f.arrayBuffer(), pdfjs);
+      var parsed = EXTRATO_PARSERS[op](linhas);
+      if(!parsed.rows.length){ st.textContent = "Não encontrei faturas nesse PDF. Confira se é o extrato de comissão da "+op+"."; return; }
+      parsed.arquivo = f;
+      extratoAtual = prepararExtrato(parsed);
+      fechar();
+      openPreviewExtrato();
+    }catch(e){ console.error(e); st.textContent = "Erro ao ler o PDF: "+(e && e.message || e); }
+  }, "Ler extrato");
+}
+function openPreviewExtrato(){
+  var ex = extratoAtual; if(!ex) return;
+  var cab = ex.cab, rows = ex.rows;
+  var confere = cab.total!=null && Math.abs(cab.total - cab.soma) < 0.01;
+  var clientesOrd = state.clientes.slice().sort(function(a,b){ return clienteLabel(a).localeCompare(clienteLabel(b)); });
+  var body =
+    '<div class="kv-list" style="margin-bottom:10px;">'+
+      '<div class="kv-row"><span class="k">Extrato</span><span>'+escapeHtml(cab.operadora)+' nº '+escapeHtml(cab.extrato||"—")+' · apuração '+fmtDateISO(cab.periodo_de)+' a '+fmtDateISO(cab.periodo_ate)+'</span></div>'+
+      '<div class="kv-row"><span class="k">Total do extrato</span><span><b>'+fmtMoney(cab.total||0)+'</b> '+(confere? '<span class="pill pill-ok">bate com as '+rows.length+' faturas</span>' : '<span class="pill pill-bad">soma das faturas '+fmtMoney(cab.soma)+'</span>')+(cab.liquido? ' <span class="muted">· líquido recebido '+fmtMoney(cab.liquido)+'</span>' : '')+'</span></div>'+
+    '</div>'+
+    '<div class="field row2"><div class="field"><label>Data de recebimento</label><input type="date" id="ext-data" value="'+escapeHtml(cab.pago_em||todayISO())+'"></div><div class="field"><label>&nbsp;</label><span class="muted" style="font-size:12px;padding-top:9px;">Lança o valor bruto de cada fatura (o imposto é descontado no resumo, como nos lançamentos manuais).</span></div></div>'+
+    '<div class="tablewrap" style="max-height:52vh;overflow:auto;"><table class="grid"><thead><tr><th></th><th>Contrato (operadora)</th><th>Parc.</th><th>Ref.</th><th class="num">%</th><th class="num">Comissão</th><th>Lançar como</th><th style="min-width:220px;">Cliente no sistema</th></tr></thead><tbody>'+
+    rows.map(function(r){
+      var sel = '<select data-ext-cli="'+r.idx+'" style="max-width:260px;"><option value="">— não lançar —</option>'+clientesOrd.map(function(c){ return '<option value="'+c.id+'"'+(r.cliente && r.cliente.id===c.id?' selected':'')+'>'+escapeHtml(clienteLabel(c).slice(0,45))+'</option>'; }).join("")+'</select>';
+      var notas = [];
+      if(r.jaLancado) notas.push('<span class="pill pill-muted">já lançado</span>');
+      if(r.duplicado) notas.push('<span class="pill pill-warn">parece já lançado à mão</span>');
+      if(!r.cliente) notas.push('<span class="pill pill-warn">cliente não encontrado</span>');
+      if(r.casamento==="contrato") notas.push('<span class="muted" style="font-size:11.5px;">pelo nº do contrato</span>');
+      r.avisos.forEach(function(a){ notas.push('<span class="muted" style="font-size:11.5px;color:var(--danger);">⚠ '+escapeHtml(a)+'</span>'); });
+      return '<tr>'+
+        '<td><input type="checkbox" data-ext-ok="'+r.idx+'"'+(r.marcado?' checked':'')+(r.jaLancado?' disabled':'')+'></td>'+
+        '<td><b>'+escapeHtml(r.nome)+'</b><div class="muted" style="font-size:11.5px;">'+escapeHtml(r.contrato)+' · '+escapeHtml(r.produto)+' · '+r.vidas+' vida(s) · vig. '+fmtDateISO(r.vigencia)+'</div></td>'+
+        '<td class="num">'+r.parcela+'ª</td><td style="white-space:nowrap;">'+monthLabel(r.referencia)+'</td>'+
+        '<td class="num">'+String(r.percentual).replace(".", ",")+'%</td><td class="num" style="white-space:nowrap;"><b>'+fmtMoney(r.comissao)+'</b></td>'+
+        '<td style="white-space:nowrap;">'+escapeHtml(r.tipo)+'</td>'+
+        '<td>'+sel+'<div style="margin-top:3px;display:flex;gap:4px;flex-wrap:wrap;">'+notas.join(" ")+'</div></td>'+
+      '</tr>';
+    }).join("")+'</tbody></table></div>'+
+    '<div class="muted" id="ext-resumo" style="margin-top:8px;font-size:12.5px;"></div>';
+  openModal("Conferir extrato "+escapeHtml(cab.operadora)+" nº "+escapeHtml(cab.extrato||""), body, async function(fechar){
+    var data = document.getElementById("ext-data").value || todayISO();
+    var escolhidos = rows.filter(function(r){ return r.marcado && r.clienteId && !r.jaLancado; });
+    if(!escolhidos.length){ toast("Nenhuma fatura marcada para lançar."); return; }
+    var btn = document.getElementById("modal-save"); if(btn){ btn.disabled = true; btn.textContent = "Lançando…"; }
+    var ok = await lancarExtrato(ex, escolhidos, data);
+    if(ok){ fechar(); extratoAtual = null; render(); }
+    else if(btn){ btn.disabled = false; btn.textContent = "Lançar selecionados"; }
+  }, "Lançar selecionados");
+  var modal = document.querySelector(".modal"); if(modal) modal.style.maxWidth = "min(1180px, 96vw)";
+  function atualizarResumo(){
+    rows.forEach(function(r){
+      var s = document.querySelector('[data-ext-cli="'+r.idx+'"]'), c = document.querySelector('[data-ext-ok="'+r.idx+'"]');
+      r.clienteId = s ? s.value : ""; r.marcado = !!(c && c.checked);
+      if(c && !r.clienteId){ c.checked = false; r.marcado = false; }
+    });
+    var esc = rows.filter(function(r){ return r.marcado && r.clienteId && !r.jaLancado; });
+    var el = document.getElementById("ext-resumo");
+    if(el) el.innerHTML = '<b>'+esc.length+'</b> fatura(s) marcadas · '+fmtMoney(esc.reduce(function(s,r){ return s+r.comissao; },0))+' · '+rows.filter(function(r){ return !r.clienteId && !r.jaLancado; }).length+' sem cliente (não serão lançadas)';
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ext-cli]"), function(s){ s.onchange = function(){ var r = rows[parseInt(s.getAttribute("data-ext-cli"),10)]; var c = document.querySelector('[data-ext-ok="'+r.idx+'"]'); if(c && s.value && !r.jaLancado) c.checked = true; atualizarResumo(); }; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ext-ok]"), function(c){ c.onchange = atualizarResumo; });
+  atualizarResumo();
+}
+async function lancarExtrato(ex, escolhidos, data){
+  var cab = ex.cab, arquivoPath = null;
+  try{
+    if(ex.arquivo){
+      var path = "extratos/"+cab.operadora.toLowerCase()+"-"+(cab.extrato||"sem-numero")+"-"+Date.now()+".pdf";
+      var up = await sb.storage.from("financeiro").upload(path, ex.arquivo, {upsert:true});
+      if(!up.error) arquivoPath = path; else console.warn(up.error);
+    }
+  }catch(e){ console.warn(e); }
+  var registros = escolhidos.map(function(r){
+    return {
+      cliente_id: r.clienteId, valor: r.comissao, parcela: r.tipo, data_recebimento: data, mes_referencia: r.referencia,
+      observacoes: "Extrato "+cab.operadora+" nº "+(cab.extrato||"—")+" · contrato "+r.contrato+" · fatura "+r.fatura+" · "+r.parcela+"ª parcela na operadora · "+String(r.percentual).replace(".", ",")+"% sobre "+fmtMoney(r.base),
+      arquivo_path: arquivoPath, criado_por: currentUser()
+    };
+  });
+  var ins = await sb.from("comissoes_recebidas").insert(registros);
+  if(ins.error){ console.error(ins.error); toast("Erro ao lançar: "+ins.error.message); return false; }
+  /* baixa nas parcelas + guarda o nº do contrato e a última parcela no cliente */
+  var porCliente = {};
+  escolhidos.forEach(function(r){ (porCliente[r.clienteId] = porCliente[r.clienteId] || []).push(r); });
+  var ids = Object.keys(porCliente);
+  for(var i=0;i<ids.length;i++){
+    var cli = state.clientes.filter(function(x){ return x.id===ids[i]; })[0]; if(!cli) continue;
+    var cfg = Object.assign({}, comissaoCfg(cli) || {});
+    var contratos = Array.isArray(cfg.contratos_operadora) ? cfg.contratos_operadora.slice() : [];
+    porCliente[ids[i]].forEach(function(r){
+      if(contratos.indexOf(r.contrato)<0) contratos.push(r.contrato);
+      if(r.parcela <= nParcelasCheias()) cfg["p"+r.parcela] = {status:"recebida", mes:r.referencia};
+      else {
+        if(cfg.vitalicio === undefined || cfg.vitalicio === null) cfg.vitalicio = true;
+        if(!cfg.vitalicio_inicio) cfg.vitalicio_inicio = r.referencia;
+      }
+      var u = cfg.ultima_parcela_operadora;
+      if(!u || r.referencia > u.ref || (r.referencia===u.ref && r.parcela > u.n)) cfg.ultima_parcela_operadora = {n:r.parcela, ref:r.referencia, operadora:cab.operadora, contrato:r.contrato};
+    });
+    cfg.contratos_operadora = contratos;
+    await salvarComissaoCfg(cli, cfg);
+  }
+  await reload("comissoes_recebidas");
+  toast(registros.length+" lançamento(s) do extrato "+cab.operadora+" nº "+(cab.extrato||"")+" feitos.");
+  return true;
+}
+function ultimaParcelaOperadoraHtml(c){
+  var u = (comissaoCfg(c)||{}).ultima_parcela_operadora; if(!u) return "";
+  var meses = (function(a, b){ var pa=a.split("-"), pb=b.split("-"); return (parseInt(pb[0])-parseInt(pa[0]))*12 + (parseInt(pb[1])-parseInt(pa[1])); })(u.ref, todayMonthKey());
+  return '<div class="muted" style="font-size:11.5px;" title="Última parcela que apareceu no extrato da operadora">'+escapeHtml(u.operadora||"")+': '+u.n+'ª em '+monthLabel(u.ref)+(meses>0? ' · agora ~'+(u.n+meses)+'ª' : '')+'</div>';
 }
 
 /* ================= CLIENTES: Excel (importar / exportar) ================= */
