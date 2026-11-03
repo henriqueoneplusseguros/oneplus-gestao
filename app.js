@@ -47,7 +47,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [], lead_anexos: [],
+    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [], lead_anexos: [], lead_eventos: [],
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -405,6 +405,8 @@ async function loadAll(){
     state.comissoes_recebidas = results[16].data || [];
     var anx = await sb.from("lead_anexos").select("*").order("criado_em",{ascending:false});
     state.lead_anexos = anx.error ? [] : (anx.data || []);
+    var evs = await sb.from("lead_eventos").select("*").order("criado_em");
+    state.lead_eventos = evs.error ? [] : (evs.data || []);
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
   render();
@@ -427,7 +429,8 @@ async function reload(table){
         carencia_modelos: function(){ return sb.from("carencia_modelos").select("*").order("nome"); },
         lead_notas: function(){ return sb.from("lead_notas").select("*").order("criado_em",{ascending:false}); },
         comissoes_recebidas: function(){ return sb.from("comissoes_recebidas").select("*").order("data_recebimento",{ascending:false}); },
-        lead_anexos: function(){ return sb.from("lead_anexos").select("*").order("criado_em",{ascending:false}); }
+        lead_anexos: function(){ return sb.from("lead_anexos").select("*").order("criado_em",{ascending:false}); },
+        lead_eventos: function(){ return sb.from("lead_eventos").select("*").order("criado_em"); }
   };
   var r = await map[table]();
   if(r.error){ console.error(r.error); toast("Erro ao atualizar "+table); return; }
@@ -2538,7 +2541,9 @@ async function setLeadEtapa(leadId, novaEtapa, motivoPerda){
   var patch = {etapa: novaEtapa, etapa_atualizada_em: new Date().toISOString()};
   if(novaEtapa==="Ganho" && lead && !lead.data_ganho){ patch.data_ganho = todayISO(); }
   if(novaEtapa==="Perdido" && motivoPerda){ patch.motivo_perda = motivoPerda; }
+  var etapaAntes = lead ? lead.etapa : null;
   var ok = await dbUpdate("leads", leadId, patch);
+  if(ok && etapaAntes!==novaEtapa) await registrarEventoLead(leadId, "etapa", null, {de: etapaAntes, para: novaEtapa, motivo: novaEtapa==="Perdido" ? (motivoPerda||null) : null});
   if(ok && novaEtapa==="Ganho"){ await ensureImplantacao(leadId); }
   return ok;
 }
@@ -2741,7 +2746,9 @@ function garantirEstiloTarefaCard(){
     ".k-tarefa.atrasada{border-color:color-mix(in srgb, var(--danger) 45%, var(--line));}"+
     ".k-tarefa-ok{flex:0 0 auto;width:26px;height:26px;border-radius:50%;border:1.5px solid color-mix(in srgb, var(--k-cor) 45%, var(--line));"+
       "background:var(--surface);color:var(--k-cor);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;padding:0;}"+
-    ".k-tarefa-ok:hover{background:var(--k-cor);color:#fff;}";
+    ".k-tarefa-ok:hover{background:var(--k-cor);color:#fff;}"+
+    ".k-tarefa-btns{flex:0 0 auto;display:flex;flex-direction:column;gap:5px;}"+
+    ".k-tarefa-ed{border-color:var(--line);color:var(--text-soft);}";
   document.head.appendChild(st);
 }
 function kanbanCardAtividadesHtml(l, agoraISO){
@@ -2756,7 +2763,8 @@ function kanbanCardAtividadesHtml(l, agoraISO){
         '<span class="k-tarefa-ic" aria-label="'+escapeHtml(t.canal||"Tarefa")+'"><svg viewBox="0 0 24 24" aria-hidden="true">'+v.svg+'</svg></span>'+
         '<div class="k-tarefa-txt"><div class="k-tarefa-tit">'+escapeHtml(t.titulo||t.canal||"Tarefa")+'</div>'+
           '<div class="k-tarefa-meta"><span>'+escapeHtml(t.canal||"Tarefa")+' · '+quandoTarefaCurto(t.vencimento_em)+'</span>'+(overdue? '<span class="k-atraso">· atrasada</span>' : '')+'</div></div>'+
-        '<button type="button" class="k-tarefa-ok kanban-card-noopen" data-concluir-tarefa-lead="'+t.id+'" title="Concluir tarefa" aria-label="Concluir tarefa">✓</button>'+
+        '<div class="k-tarefa-btns kanban-card-noopen"><button type="button" class="k-tarefa-ok k-tarefa-ed" data-editar-tarefa-lead="'+t.id+'" title="Editar ou excluir tarefa" aria-label="Editar ou excluir tarefa"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg></button>'+
+        '<button type="button" class="k-tarefa-ok" data-concluir-tarefa-lead="'+t.id+'" title="Concluir tarefa" aria-label="Concluir tarefa">✓</button></div>'+
       '</div>';
     }).join("")+
   '</div>';
@@ -2861,31 +2869,186 @@ function viewFunilLista(leads, agoraISO){
     }).join("")+
     '</tbody></table></div></div></div>';
 }
-function leadTarefaFormHtml(){
-  return '<div class="field"><label>O que fazer</label><input id="lt-titulo" placeholder="ex: Ligar para o cliente"></div>'+
-  '<div class="field row2"><div class="field"><label>Canal</label><select id="lt-canal">'+CANAIS_TAREFA.map(function(c){return '<option>'+c+'</option>';}).join("")+'</select></div>'+dateTimeFieldHtml("lt-venc", null, "Data e hora")+'</div>'+
-  '<div class="field"><label>Observação (opcional)</label><textarea id="lt-desc"></textarea></div>';
+function leadTarefaFormHtml(t){
+  t = t || {};
+  return '<div class="field"><label>O que fazer</label><input id="lt-titulo" placeholder="ex: Ligar para o cliente" value="'+escapeHtml(t.titulo||"")+'"></div>'+
+  '<div class="field row2"><div class="field"><label>Canal</label><select id="lt-canal">'+CANAIS_TAREFA.map(function(c){return '<option'+(t.canal===c?' selected':'')+'>'+c+'</option>';}).join("")+'</select></div>'+dateTimeFieldHtml("lt-venc", t.vencimento_em||null, "Data e hora")+'</div>'+
+  '<div class="field"><label>Observação (opcional)</label><textarea id="lt-desc">'+escapeHtml(t.descricao||"")+'</textarea></div>'+
+  (t.id? '<div class="rowflex" style="justify-content:space-between;align-items:center;margin-top:4px;border-top:1px solid var(--line);padding-top:10px;">'+
+    '<span class="muted" style="font-size:12px;">'+(t.status==="Concluída"? 'Concluída'+(t.concluido_em? ' em '+fmtDateTime(t.concluido_em) : '')+' · <button type="button" class="linklike" id="lt-reabrir">reabrir</button>' : 'Agendada'+(t.criado_em? ' em '+fmtDateTime(t.criado_em) : ''))+'</span>'+
+    '<button type="button" class="linklike" id="lt-excluir" style="color:var(--danger);">excluir tarefa</button></div>' : '');
 }
-function openLeadTarefaModal(lead, onSaved){
-  openModal("Agendar tarefa — "+(lead.nome||lead.empresa||"lead"), leadTarefaFormHtml(), function(closeFn){
+/* Agendar (tarefa = undefined) ou editar uma tarefa do negócio. */
+function openLeadTarefaModal(lead, onSaved, tarefa){
+  var editando = !!(tarefa && tarefa.id);
+  openModal((editando? "Editar tarefa — " : "Agendar tarefa — ")+escapeHtml(lead.nome||lead.empresa||"lead"), leadTarefaFormHtml(tarefa), async function(closeFn){
     var titulo = document.getElementById("lt-titulo").value.trim();
     var venc = readDateTime("lt-venc");
     if(!titulo){ toast("Descreva a tarefa."); return; }
     if(!venc){ toast("Escolha a data."); return; }
+    var canal = document.getElementById("lt-canal").value, desc = document.getElementById("lt-desc").value.trim();
+    if(editando){
+      var patch = {titulo: titulo, canal: canal, vencimento_em: venc.iso, data_vencimento: venc.dateOnly, descricao: desc};
+      var mud = [];
+      if((tarefa.titulo||"")!==titulo) mud.push("texto: “"+(tarefa.titulo||"")+"” → “"+titulo+"”");
+      if((tarefa.canal||"")!==canal) mud.push("canal "+(tarefa.canal||"—")+" → "+canal);
+      if(tarefa.vencimento_em && new Date(tarefa.vencimento_em).getTime()!==new Date(venc.iso).getTime()) mud.push("data "+fmtDateTime(tarefa.vencimento_em)+" → "+fmtDateTime(venc.iso));
+      if((tarefa.descricao||"")!==desc) mud.push("observação alterada");
+      closeFn();
+      var ok = await dbUpdate("tarefas", tarefa.id, patch);
+      if(ok && mud.length) await registrarEventoLead(lead.id, "tarefa_editada", "Tarefa alterada: "+titulo, {detalhe: mud.join(" · "), canal: canal});
+      if(onSaved) onSaved();
+      return;
+    }
     var data = {
       tipo: "Tarefa",
       titulo: titulo,
       responsavel: lead.vendedor || currentUser(),
       lead_id: lead.id,
-      canal: document.getElementById("lt-canal").value,
+      canal: canal,
       vencimento_em: venc.iso,
       data_vencimento: venc.dateOnly,
       status: "Pendente",
-      descricao: document.getElementById("lt-desc").value.trim()
+      descricao: desc
     };
-    dbInsert("tarefas", data).then(function(){ if(onSaved) onSaved(); });
     closeFn();
+    await dbInsert("tarefas", data);
+    if(onSaved) onSaved();
+  }, editando? "Salvar alteração" : "Salvar");
+  if(!editando) return;
+  var ex = document.getElementById("lt-excluir");
+  if(ex) ex.onclick = async function(){
+    if(!ex.getAttribute("data-confirmar")){ ex.setAttribute("data-confirmar","1"); ex.textContent = "clique de novo para excluir"; ex.style.fontWeight = "700"; return; }
+    ex.disabled = true; ex.textContent = "excluindo…";
+    var root = document.getElementById("modal-root"); if(root) root.innerHTML = "";
+    var ok = await dbDelete("tarefas", tarefa.id);
+    if(ok) await registrarEventoLead(lead.id, "tarefa_excluida", "Tarefa excluída: "+(tarefa.titulo||""), {detalhe: (tarefa.canal||"Tarefa")+" que estava para "+fmtDateTime(tarefa.vencimento_em), canal: tarefa.canal});
+    if(onSaved) onSaved();
+  };
+  var re = document.getElementById("lt-reabrir");
+  if(re) re.onclick = async function(){
+    var root = document.getElementById("modal-root"); if(root) root.innerHTML = "";
+    var ok = await dbUpdate("tarefas", tarefa.id, {status:"Pendente", concluido_em:null});
+    if(ok) await registrarEventoLead(lead.id, "tarefa_editada", "Tarefa reaberta: "+(tarefa.titulo||""), {canal: tarefa.canal});
+    if(onSaved) onSaved();
+  };
+}
+function abrirEditarTarefaLead(tarefaId, depois){
+  var t = state.tarefas.filter(function(x){ return x.id===tarefaId; })[0]; if(!t) return;
+  var l = state.leads.filter(function(x){ return x.id===t.lead_id; })[0]; if(!l) return;
+  openLeadTarefaModal(l, depois, t);
+}
+
+/* ===== Linha do tempo do negócio (lead_eventos + o que já existe: tarefas, notas, documentos, ganho) ===== */
+function eventosDoLead(leadId){ return (state.lead_eventos||[]).filter(function(e){ return e.lead_id===leadId; }); }
+async function registrarEventoLead(leadId, tipo, descricao, dados){
+  if(!leadId) return;
+  try{
+    var r = await sb.from("lead_eventos").insert({lead_id: leadId, tipo: tipo, descricao: descricao||null, dados: dados||null, autor: currentUserName() || currentUser()}).select();
+    if(r.error){ console.warn("lead_eventos:", r.error.message); return; }
+    if(r.data && r.data[0]) state.lead_eventos = (state.lead_eventos||[]).concat([r.data[0]]);
+  }catch(e){ console.warn(e); }
+}
+function nomeAutorEvento(x){
+  if(!x) return "";
+  x = String(x); if(x.indexOf("@")<0) return x;
+  var e = (state.equipe||[]).filter(function(q){ return (q.email||"").toLowerCase()===x.toLowerCase(); })[0];
+  return e ? e.nome : x.split("@")[0];
+}
+var FEITO_POR_CANAL = {"Ligar":"Ligação feita","WhatsApp":"Mensagem enviada no WhatsApp","E-mail":"E-mail enviado","Reunião":"Reunião feita"};
+function diasEntre(a, b){ return Math.max(0, Math.round((new Date(b) - new Date(a))/86400000)); }
+function linhaDoTempoLead(lead){
+  var itens = [];
+  function add(quando, tipo, titulo, detalhe, autor, canal){ if(quando) itens.push({quando: String(quando), tipo: tipo, titulo: titulo, detalhe: detalhe||"", autor: nomeAutorEvento(autor), canal: canal||null}); }
+  add(lead.criado_em, "entrada", "Entrou no funil", [lead.origem? "origem: "+lead.origem : "", lead.vendedor? "com "+lead.vendedor : ""].filter(Boolean).join(" · "), lead.criado_por);
+  var temGanho = false;
+  eventosDoLead(lead.id).forEach(function(e){
+    var d = e.dados || {};
+    if(e.tipo==="etapa"){
+      if(d.para==="Ganho") temGanho = true;
+      add(e.criado_em, d.para==="Ganho"? "ganho" : (d.para==="Perdido"? "perdido" : "etapa"),
+        d.para==="Ganho"? "Negócio ganho" : (d.para==="Perdido"? "Marcado como perdido" : "Avançou para "+d.para),
+        [d.de? "estava em "+d.de : "", d.motivo? "motivo: "+d.motivo : ""].filter(Boolean).join(" · "), e.autor);
+    } else add(e.criado_em, e.tipo, e.descricao || e.tipo, d.detalhe || "", e.autor, d.canal);
   });
+  if(lead.data_ganho && !temGanho) add(lead.data_ganho+"T12:00:00", "ganho", "Negócio ganho", "", null);
+  tarefasDoLead(lead.id).forEach(function(t){
+    add(t.criado_em, "tarefa", "Agendou: "+(t.titulo||t.canal||"tarefa"), (t.canal||"Tarefa")+" para "+fmtDateTime(t.vencimento_em), t.criado_por, t.canal);
+    if(t.status==="Concluída") add(t.concluido_em || t.vencimento_em, "feito", (FEITO_POR_CANAL[t.canal]||"Tarefa concluída")+": "+(t.titulo||""), t.descricao||"", t.responsavel, t.canal);
+  });
+  notasDoLead(lead.id).forEach(function(n){ add(n.criado_em, "nota", "Nota", n.texto, n.autor||n.criado_por); });
+  anexosDoLead(lead.id).forEach(function(a){ add(a.criado_em, "documento", "Documento anexado", a.nome_arquivo, a.criado_por); });
+  historicoPlanoDe(lead.id).forEach(function(h){ add(h.em, "dados", "Plano trocado na implantação", (h.motivo||"")+(h.para? " · agora "+resumoPlanoTexto(h.para) : ""), h.por); });
+  if(lead.retomado_em) add(lead.retomado_em, "etapa", "Contato retomado", "", null);
+  itens.sort(function(a,b){ return new Date(a.quando) - new Date(b.quando); });
+  return itens;
+}
+var LT_ICONES = {
+  entrada:  {cor:"#0C2A44", svg:'<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>'},
+  etapa:    {cor:"#4f6b8a", svg:'<path d="M5 12h12m-5-5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'},
+  ganho:    {cor:"#2e7d4f", svg:'<path d="m5 12.5 4.2 4L19 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'},
+  perdido:  {cor:"#b14a4a", svg:'<path d="M7 7l10 10M17 7 7 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>'},
+  nota:     {cor:"#a5691e", svg:'<path d="M6 4h9l3 3v13H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 11h6M9 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'},
+  documento:{cor:"#686868", svg:'<path d="M16 8.5 9.8 14.7a2 2 0 0 1-2.8-2.8l6.9-6.9a3.5 3.5 0 0 1 5 5L12 17a5 5 0 0 1-7-7l5.7-5.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'},
+  dados:    {cor:"#4f6b8a", svg:'<path d="M12 4v16M16 7.5c-1-1-2.4-1.5-4-1.5-2.2 0-4 1-4 2.8 0 4 8 2 8 6.2 0 1.8-1.8 3-4 3-1.8 0-3.3-.6-4.3-1.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'},
+  temperatura:{cor:"#c2410c", svg:'<path d="M10 14.5V5a2 2 0 1 1 4 0v9.5a4 4 0 1 1-4 0z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="17.5" r="1.8" fill="currentColor"/>'},
+  tarefa_excluida:{cor:"#b14a4a", svg:'<path d="M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'},
+  tarefa_editada:{cor:"#686868", svg:'<path d="M4 20h4L19 9l-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>'}
+};
+function iconeLinhaTempo(it){
+  var v = (it.tipo==="tarefa" || it.tipo==="feito") ? canalTarefaVisual(it.canal) : (LT_ICONES[it.tipo] || LT_ICONES.etapa);
+  var vazio = it.tipo==="tarefa"; /* agendada = contorno; feita = cheio */
+  return '<span class="lt-ic'+(vazio?' lt-ic-vazio':'')+'" style="--lt-cor:'+v.cor+';"><svg viewBox="0 0 24 24" aria-hidden="true">'+v.svg+'</svg></span>';
+}
+function cicloVendaLead(lead){
+  var hoje = new Date().toISOString();
+  var etapas = eventosDoLead(lead.id).filter(function(e){ return e.tipo==="etapa" && e.dados; }).sort(function(a,b){ return new Date(a.criado_em)-new Date(b.criado_em); });
+  /* tempo em cada etapa: só dá para medir a partir das mudanças registradas */
+  var tempos = [], ini = lead.criado_em, atual = etapas.length && etapas[0].dados.de ? etapas[0].dados.de : null;
+  etapas.forEach(function(e){ if(atual && ini) tempos.push({etapa: atual, dias: diasEntre(ini, e.criado_em)}); atual = e.dados.para; ini = e.criado_em; });
+  var feitos = tarefasDoLead(lead.id).filter(function(t){ return t.status==="Concluída"; }).length;
+  var resumo;
+  if(lead.data_ganho) resumo = '<b>Fechou em '+diasEntre(lead.criado_em, lead.data_ganho+"T12:00:00")+' dia(s)</b> · entrou em '+fmtDateISO(lead.criado_em)+', ganho em '+fmtDateISO(lead.data_ganho);
+  else if(lead.etapa==="Perdido") resumo = '<b>Perdido</b> depois de '+diasEntre(lead.criado_em, lead.etapa_atualizada_em||hoje)+' dia(s) no funil';
+  else resumo = '<b>'+diasEntre(lead.criado_em, hoje)+' dia(s) no funil</b> · em '+escapeHtml(lead.etapa||"—")+(lead.etapa_atualizada_em? ' há '+diasEntre(lead.etapa_atualizada_em, hoje)+' dia(s)' : '');
+  return '<div class="lt-ciclo">'+resumo+' · '+feitos+' contato(s) feito(s)'+
+    (tempos.length? '<div class="lt-etapas">'+tempos.map(function(t){ return '<span class="lt-chip">'+escapeHtml(t.etapa)+' <b>'+t.dias+'d</b></span>'; }).join("")+'</div>' : '')+
+  '</div>';
+}
+function linhaDoTempoHtml(lead){
+  garantirEstiloLinhaTempo();
+  var itens = linhaDoTempoLead(lead);
+  return '<div class="side-panel-section">'+
+    '<h4>Linha do tempo</h4>'+
+    cicloVendaLead(lead)+
+    '<div class="lt-lista">'+itens.map(function(it){
+      return '<div class="lt-item">'+iconeLinhaTempo(it)+
+        '<div class="lt-corpo"><div class="lt-tit">'+escapeHtml(it.titulo)+'</div>'+
+        (it.detalhe? '<div class="lt-det">'+escapeHtml(it.detalhe)+'</div>' : '')+
+        '<div class="lt-meta">'+fmtDateTime(it.quando)+(it.autor? ' · '+escapeHtml(it.autor) : '')+'</div></div></div>';
+    }).join("")+'</div>'+
+    (eventosDoLead(lead.id).length? '' : '<div class="muted" style="font-size:11.5px;margin-top:6px;">Mudanças de etapa, temperatura e valor passam a ser registradas a partir de 03/11/2026.</div>')+
+  '</div>';
+}
+function garantirEstiloLinhaTempo(){
+  if(document.getElementById("lt-css")) return;
+  var st = document.createElement("style"); st.id = "lt-css";
+  st.textContent =
+    ".lt-ciclo{font-size:12.5px;line-height:1.5;padding:9px 11px;border-radius:10px;background:var(--accent-blue-bg);color:var(--text);margin-bottom:12px;}"+
+    ".lt-etapas{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}"+
+    ".lt-chip{font-size:11.5px;padding:2px 8px;border-radius:999px;background:var(--surface);border:1px solid var(--line);}"+
+    ".lt-lista{position:relative;padding-left:2px;}"+
+    ".lt-lista::before{content:'';position:absolute;left:13px;top:6px;bottom:6px;width:2px;background:var(--line);}"+
+    ".lt-item{position:relative;display:flex;gap:11px;padding:0 0 14px 0;}"+
+    ".lt-item:last-child{padding-bottom:0;}"+
+    ".lt-ic{position:relative;z-index:1;flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--lt-cor);color:#fff;box-shadow:0 0 0 3px var(--surface);}"+
+    ".lt-ic svg{width:14px;height:14px;}"+
+    ".lt-ic-vazio{background:var(--surface);color:var(--lt-cor);border:2px solid var(--lt-cor);}"+
+    ".lt-corpo{min-width:0;padding-top:3px;}"+
+    ".lt-tit{font-size:13px;font-weight:600;color:var(--text);line-height:1.35;overflow-wrap:anywhere;}"+
+    ".lt-det{font-size:12.5px;color:var(--text);opacity:.85;margin-top:1px;white-space:pre-wrap;overflow-wrap:anywhere;}"+
+    ".lt-meta{font-size:11.5px;color:var(--text-soft);margin-top:2px;}";
+  document.head.appendChild(st);
 }
 
 /* ===== Idades das vidas (cotação) — campo de "chips", estilo Pipedrive ===== */
@@ -3076,6 +3239,15 @@ function openLeadModal(existing, onSaved, seed){
     if(data.idades.length) data.quantidade_vidas = data.idades.length;
     var leadId = await salvarLead(existing, data);
     if(!leadId) return;
+    if(existing){
+      if(existing.etapa!==novaEtapa) await registrarEventoLead(leadId, "etapa", null, {de: existing.etapa, para: novaEtapa, motivo: data.motivo_perda||null});
+      var mud = [];
+      if((existing.valor_estimado||0)!==(data.valor_estimado||0)) mud.push("valor "+fmtMoney(existing.valor_estimado||0)+" → "+fmtMoney(data.valor_estimado||0));
+      if((existing.operadora||"")!==(data.operadora||"")) mud.push("operadora "+(existing.operadora||"—")+" → "+(data.operadora||"—"));
+      if((existing.categoria_plano||"")!==(data.categoria_plano||"")) mud.push("plano "+(existing.categoria_plano||"—")+" → "+(data.categoria_plano||"—"));
+      if((existing.quantidade_vidas||0)!==(data.quantidade_vidas||0)) mud.push("vidas "+(existing.quantidade_vidas||0)+" → "+(data.quantidade_vidas||0));
+      if(mud.length) await registrarEventoLead(leadId, "dados", "Proposta alterada", {detalhe: mud.join(" · ")});
+    }
     if(leadId && novaEtapa==="Ganho"){ await ensureImplantacao(leadId); }
     closeFn();
     if(onSaved) onSaved(leadId);
@@ -3189,7 +3361,7 @@ function openLeadDetailPanel(leadId){
             '<div><span class="k-activity-icon">'+(ATIVIDADE_ICON[t.canal]||"•")+'</span> '+escapeHtml(t.titulo)+
             (t.status==="Concluída"? ' <span class="pill pill-ok">concluída</span>' : (overdue? ' <span class="pill pill-bad">atrasada</span>' : ''))+
             '</div>'+
-            '<div class="meta">'+escapeHtml(t.canal||"—")+' · '+fmtDateTime(t.vencimento_em)+(t.status!=="Concluída"? ' · <button class="linklike" data-panel-concluir-tarefa="'+t.id+'">concluir</button>' : '')+'</div>'+
+            '<div class="meta">'+escapeHtml(t.canal||"—")+' · '+fmtDateTime(t.vencimento_em)+(t.status!=="Concluída"? ' · <button class="linklike" data-panel-concluir-tarefa="'+t.id+'">concluir</button>' : '')+' · <button class="linklike" data-panel-editar-tarefa="'+t.id+'">editar / excluir</button></div>'+
           '</div>';
         }).join("") : '<div class="empty">Nenhuma atividade ainda.</div>')+
       '</div>'+
@@ -3201,6 +3373,7 @@ function openLeadDetailPanel(leadId){
           return '<div class="note-item">'+escapeHtml(n.texto)+'<div class="meta">'+escapeHtml(n.autor||"—")+' · '+fmtDateTime(n.criado_em)+'</div></div>';
         }).join("") : '<div class="empty">Nenhuma nota ainda.</div>')+
       '</div>'+
+      linhaDoTempoHtml(lead)+
     '</div>';
 
   root.innerHTML = '<div class="panel-backdrop" id="panel-backdrop"><div class="side-panel">'+body+'</div></div>';
@@ -3221,6 +3394,9 @@ function openLeadDetailPanel(leadId){
   };
   Array.prototype.forEach.call(root.querySelectorAll("[data-panel-concluir-tarefa]"), function(btn){
     btn.onclick = function(){ setTarefaStatus(btn.getAttribute("data-panel-concluir-tarefa"), "Concluída").then(function(){ openLeadDetailPanel(leadId); }); };
+  });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-panel-editar-tarefa]"), function(btn){
+    btn.onclick = function(){ abrirEditarTarefaLead(btn.getAttribute("data-panel-editar-tarefa"), function(){ openLeadDetailPanel(leadId); }); };
   });
   Array.prototype.forEach.call(root.querySelectorAll("[data-panel-etapa]"), function(step){
     step.onclick = function(){
@@ -3904,6 +4080,10 @@ function viewRelatorios(){
     tile("Vendido (ativas + implantação)", fmtMoney(valorValidas), (metaPeriodo? fmtPct(valorValidas/metaPeriodo)+" da meta de "+fmtMoney(metaPeriodo) : "sem meta no período")+(vidasValidas? " · "+vidasValidas+" vidas" : ""))+
     tile("Ticket médio", fmtMoney(validas.length? valorValidas/validas.length : 0), "por contrato")+
     tile("Conversão", fmtPct(conversao), vendas.length+" ganhos × "+perdidasNegociacao.length+" perdidos na negociação")+
+    (function(){ var ds = vendas.filter(function(l){ return l.criado_em && l.data_ganho; }).map(function(l){ return diasEntre(l.criado_em, l.data_ganho+"T12:00:00"); }).sort(function(a,b){ return a-b; });
+      if(!ds.length) return "";
+      var med = ds.length%2? ds[(ds.length-1)/2] : Math.round((ds[ds.length/2-1]+ds[ds.length/2])/2);
+      return tile("Ciclo de venda", Math.round(ds.reduce(function(s,x){ return s+x; },0)/ds.length)+" dias", "média da entrada no funil até o ganho · mediana "+med+" · de "+ds[0]+" a "+ds[ds.length-1]+" dias"); })()+
     (verComissao?
       tile("Comissão das vendas (parcelas)", fmtMoney(comParcelas), "líquido · "+(state.params.parcelas_cheias||3)+" parcelas por contrato")+
       tile("Vitalício gerado", fmtMoney(comVitalicio)+"/mês", "recorrente, líquido") : '')+
@@ -4252,9 +4432,11 @@ function tempSelectHtml(id, atual){
     TEMPERATURAS.map(function(t){ return '<option value="'+t.k+'"'+(atual===t.k?' selected':'')+'>'+t.label+' — '+t.dica+'</option>'; }).join("")+'</select></div>';
 }
 async function setTemperatura(leadId, temp){
+  var antes = (state.leads.filter(function(l){ return l.id===leadId; })[0]||{}).temperatura || null;
   var r = await sb.from("leads").update({temperatura: temp || null}).eq("id", leadId);
   if(r.error){ console.error(r.error); toast(/temperatura/.test(r.error.message||"") ? "Falta a atualização do banco (temperatura)." : "Erro: "+r.error.message); return false; }
   state.leads = state.leads.map(function(l){ return l.id===leadId ? Object.assign({}, l, {temperatura: temp || null}) : l; });
+  if(antes !== (temp||null)){ var tt = TEMPERATURAS.filter(function(t){ return t.k===temp; })[0]; registrarEventoLead(leadId, "temperatura", "Temperatura: "+(tt? tt.label : "sem temperatura"), null); }
   render();
   return true;
 }
@@ -5121,6 +5303,9 @@ function wireActions(){
   });
   Array.prototype.forEach.call(document.querySelectorAll("[data-concluir-tarefa-lead]"), function(btn){
         btn.onclick=function(){ setTarefaStatus(btn.getAttribute("data-concluir-tarefa-lead"), "Concluída"); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-editar-tarefa-lead]"), function(btn){
+        btn.onclick=function(){ abrirEditarTarefaLead(btn.getAttribute("data-editar-tarefa-lead")); };
   });
 
     Array.prototype.forEach.call(document.querySelectorAll("[data-tarefa-tipo-tab]"), function(el){ el.onclick=function(){ tarefasFilterTipo=el.getAttribute("data-tarefa-tipo-tab"); render(); }; });
