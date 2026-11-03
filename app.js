@@ -1436,7 +1436,8 @@ function openFinanceiroModal(cliente){
       '<div class="kv-row"><span class="k">Valor do contrato</span><span>'+fmtMoney(cliente.valor_contrato_total)+'</span></div>'+
       '<div class="kv-row"><span class="k">Comissão esperada (3 parcelas · 300%)</span><span>'+fmtMoney(esperado300)+'</span></div>'+
     '</div>'+
-    '<label class="rowflex" style="font-weight:400;margin-bottom:12px;"><input type="checkbox" id="fin-baixado" '+(cliente.baixado_financeiro?"checked":"")+'> Cliente baixado (encerrado financeiramente)</label>'+
+    '<label class="rowflex" style="font-weight:400;margin-bottom:12px;"><input type="checkbox" id="fin-baixado" '+(cliente.baixado_financeiro?"checked":"")+'> Baixa feita (parcelas conferidas)</label>'+
+    '<div class="muted" style="font-size:11.5px;margin:-6px 0 12px;">A baixa não tira o vitalício da previsão. Para encerrar o cliente de vez, mude o status para "Cancelado" no cadastro.</div>'+
     comissaoCfgFormHtml(cliente)+
     '<fieldset style="margin-top:12px;"><legend>Lançar comissionamento recebido</legend>'+
       '<div class="field row3"><div class="field"><label>Parcela</label><select id="fin-parcela">'+PARCELAS_COMISSAO.map(function(p){ return '<option>'+p+'</option>'; }).join("")+'</select></div>'+moneyFieldHtml("fin-valor", null, "Valor recebido (R$)")+'<div class="field"><label>Data de recebimento</label><input type="date" id="fin-data" value="'+todayISO()+'"></div></div>'+
@@ -1556,7 +1557,7 @@ function parcelasComissaoCliente(c, params){
 /* Comissão líquida prevista de UM cliente num mês: {parcelas, bonus, vitalicio}. */
 function comissaoClienteNoMes(c, mk, params){
   var r = {parcelas:0, bonus:0, vitalicio:0};
-  if(c.status==="Cancelado" || c.baixado_financeiro) return r;
+  if(c.status==="Cancelado") return r;
   var valor = valorBaseComissao(c), liq = 1 - (params.taxa_imposto||0);
   parcelasComissaoCliente(c, params).forEach(function(p){ if(p.mesPrevisao===mk) r.parcelas += valor * liq; });
   var s = computeSchedule(c, params);
@@ -1667,10 +1668,10 @@ function viewFinanceiroFluxo(){
   var linhas = meses.map(function(mk){ return {mk:mk, d:faturamentoDoMesDetalhe(mk, state.clientes, p)}; });
   var aReceber = 0, atrasadas = 0;
   state.clientes.forEach(function(c){
-    if(c.status==="Cancelado" || c.baixado_financeiro) return;
+    if(c.status==="Cancelado") return;
     parcelasComissaoCliente(c, p).forEach(function(x){ if(x.status==="a_receber"){ aReceber += valorBaseComissao(c)*(1-(p.taxa_imposto||0)); if(x.atrasada) atrasadas++; } });
   });
-  var naoConferidos = state.clientes.filter(function(c){ return c.status!=="Cancelado" && !c.baixado_financeiro && !comissaoConferida(c); }).length;
+  var naoConferidos = state.clientes.filter(function(c){ return c.status!=="Cancelado" && !comissaoConferida(c); }).length;
   var tiles = '<div class="tiles">'+
     tile("Previsto "+monthLabel(hoje), fmtMoney(linhas[0].d.total), "parcelas "+fmtMoney(linhas[0].d.parcelas+linhas[0].d.bonus)+" · vitalício "+fmtMoney(linhas[0].d.vitalicio))+
     tile("Próximos 3 meses", fmtMoney(linhas.slice(0,3).reduce(function(s,l){ return s+l.d.total; },0)), "líquido")+
@@ -1696,7 +1697,7 @@ function viewFinanceiro(){
   if(!todos.length) return header + '<div class="card"><div class="card-body"><div class="empty">Nenhum cliente cadastrado ainda.</div></div></div>';
   var q = (finFiltro.busca||"").toLowerCase();
   var lista = todos.filter(function(c){
-    if(finFiltro.pendentes && (comissaoConferida(c) || c.status==="Cancelado" || c.baixado_financeiro)) return false;
+    if(finFiltro.pendentes && (comissaoConferida(c) || c.status==="Cancelado")) return false;
     if(q && (clienteLabel(c)+" "+(c.titular_nome||"")+" "+(c.cnpj_cpf||"")).toLowerCase().indexOf(q)===-1) return false;
     return true;
   });
@@ -1720,7 +1721,7 @@ function viewFinanceiro(){
         '<td><select class="fin-vit-rapido" data-fin-vit="'+c.id+'" style="min-width:96px;"><option value=""'+(vitSel===""?' selected':'')+'>?</option><option value="sim"'+(vitSel==="sim"?' selected':'')+'>Sim</option><option value="nao"'+(vitSel==="nao"?' selected':'')+'>Não</option></select></td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(prev.parcelas+prev.bonus+prev.vitalicio)+'</td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(totalComissoesCliente(c.id))+'</td>'+
-        '<td>'+(c.status==="Cancelado"? '<span class="pill pill-bad">cancelado</span>' : (c.baixado_financeiro? '<span class="pill pill-muted">baixado</span>' : (comissaoConferida(c)? '<span class="pill pill-ok">definido</span>' : '<span class="pill pill-warn">a definir</span>')))+'</td>'+
+        '<td style="white-space:nowrap;">'+(c.status==="Cancelado"? '<span class="pill pill-bad">cancelado</span>' : ((comissaoConferida(c)? '<span class="pill pill-ok">definido</span>' : '<span class="pill pill-warn">a definir</span>')+(c.baixado_financeiro? ' <span class="pill pill-muted">baixa feita</span>' : '')))+'</td>'+
         '<td><button class="linklike" data-abrir-financeiro-cliente="'+c.id+'">abrir</button></td>'+
       '</tr>';
     }).join("")+
