@@ -2703,13 +2703,61 @@ function funilFilterBarHtml(){
     '<div class="viewtoggle"><button id="ff-view-kanban" class="'+(funilView==="kanban"?"active":"")+'" type="button">Kanban</button><button id="ff-view-lista" class="'+(funilView==="lista"?"active":"")+'" type="button">Lista</button></div>'+
   '</div>';
 }
+/* Tarefa no cartão do funil: balão com ícone do canal (telefone, WhatsApp...) e o texto inteiro. */
+var CANAL_TAREFA_VISUAL = {
+  "Ligar":    {cor:"#2563eb", svg:'<path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z" fill="currentColor"/>'},
+  "WhatsApp": {cor:"#16a34a", svg:'<path d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.6-1.2A9 9 0 1 0 12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8.6c.2-.4.4-.4.6-.4h.5c.2 0 .4 0 .5.4l.7 1.6c.1.2 0 .4-.1.5l-.5.6c-.1.1-.2.3 0 .5a6 6 0 0 0 2.9 2.5c.2.1.4 0 .5-.1l.6-.7c.1-.2.3-.2.5-.1l1.6.8c.2.1.3.2.3.4 0 .5-.2 1.1-.6 1.4-.5.4-1.2.6-1.9.4a9.3 9.3 0 0 1-5.2-4.3c-.5-.9-.6-1.9-.2-2.5z" fill="currentColor"/>'},
+  "E-mail":   {cor:"#7c3aed", svg:'<rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'},
+  "Reunião":  {cor:"#c2410c", svg:'<circle cx="9" cy="8" r="3.2" fill="currentColor"/><circle cx="17" cy="9" r="2.5" fill="currentColor" opacity=".75"/><path d="M3 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/><path d="M15.5 14.2c2.9-.4 5.5 1.4 5.5 4.8h-4.5" fill="currentColor" opacity=".75"/>'},
+  "Outro":    {cor:"#64748b", svg:'<rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="m8 12 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'}
+};
+function canalTarefaVisual(canal){ return CANAL_TAREFA_VISUAL[canal] || CANAL_TAREFA_VISUAL["Outro"]; }
+function quandoTarefaCurto(iso){
+  if(!iso) return "sem data";
+  var d = new Date(iso), hoje = new Date(); hoje.setHours(0,0,0,0);
+  var dia = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var diff = Math.round((dia - hoje)/86400000);
+  var hora = pad2(d.getHours())+":"+pad2(d.getMinutes());
+  if(diff===0) return "hoje, "+hora;
+  if(diff===1) return "amanhã, "+hora;
+  if(diff===-1) return "ontem, "+hora;
+  return pad2(d.getDate())+"/"+pad2(d.getMonth()+1)+(d.getFullYear()!==hoje.getFullYear()? "/"+d.getFullYear() : "")+", "+hora;
+}
+function garantirEstiloTarefaCard(){
+  if(document.getElementById("k-tarefa-css")) return;
+  var st = document.createElement("style"); st.id = "k-tarefa-css";
+  st.textContent =
+    ".k-tarefas{margin-top:8px;display:flex;flex-direction:column;gap:6px;}"+
+    ".k-tarefa{position:relative;display:flex;align-items:flex-start;gap:9px;padding:8px 8px 8px 9px;border-radius:12px;"+
+      "background:color-mix(in srgb, var(--k-cor) 9%, var(--surface));border:1px solid color-mix(in srgb, var(--k-cor) 22%, var(--line));}"+
+    ".k-tarefa:first-child::before{content:'';position:absolute;left:14px;top:-5px;width:9px;height:9px;transform:rotate(45deg);"+
+      "background:inherit;border-left:1px solid color-mix(in srgb, var(--k-cor) 22%, var(--line));border-top:1px solid color-mix(in srgb, var(--k-cor) 22%, var(--line));}"+
+    ".k-tarefa-ic{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--k-cor);color:#fff;}"+
+    ".k-tarefa-ic svg{width:15px;height:15px;}"+
+    ".k-tarefa-txt{flex:1 1 auto;min-width:0;}"+
+    ".k-tarefa-tit{font-size:13px;font-weight:600;line-height:1.35;color:var(--text);white-space:normal;overflow-wrap:anywhere;}"+
+    ".k-tarefa-meta{margin-top:2px;font-size:11.5px;color:var(--text-soft);display:flex;flex-wrap:wrap;gap:4px;align-items:center;}"+
+    ".k-tarefa-meta .k-atraso{color:var(--danger);font-weight:700;}"+
+    ".k-tarefa.atrasada{border-color:color-mix(in srgb, var(--danger) 45%, var(--line));}"+
+    ".k-tarefa-ok{flex:0 0 auto;width:26px;height:26px;border-radius:50%;border:1.5px solid color-mix(in srgb, var(--k-cor) 45%, var(--line));"+
+      "background:var(--surface);color:var(--k-cor);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;padding:0;}"+
+    ".k-tarefa-ok:hover{background:var(--k-cor);color:#fff;}";
+  document.head.appendChild(st);
+}
 function kanbanCardAtividadesHtml(l, agoraISO){
   var abertas = tarefasAbertasDoLead(l.id);
   if(!abertas.length) return "";
-  return '<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">'+
+  garantirEstiloTarefaCard();
+  return '<div class="k-tarefas">'+
     abertas.map(function(t){
       var overdue = t.vencimento_em && t.vencimento_em < agoraISO;
-      return '<span class="pill '+(overdue?'pill-bad':'pill-warn')+'" style="justify-content:space-between;"><span class="k-activity-icon">'+(ATIVIDADE_ICON[t.canal]||"•")+'</span> '+escapeHtml(t.titulo)+' — '+fmtDateTime(t.vencimento_em)+' <button class="linklike" data-concluir-tarefa-lead="'+t.id+'" style="margin-left:6px;">concluir</button></span>';
+      var v = canalTarefaVisual(t.canal);
+      return '<div class="k-tarefa'+(overdue?' atrasada':'')+'" style="--k-cor:'+v.cor+';" title="'+escapeHtml((t.canal||"Tarefa")+": "+(t.titulo||"")+" — "+fmtDateTime(t.vencimento_em))+'">'+
+        '<span class="k-tarefa-ic" aria-label="'+escapeHtml(t.canal||"Tarefa")+'"><svg viewBox="0 0 24 24" aria-hidden="true">'+v.svg+'</svg></span>'+
+        '<div class="k-tarefa-txt"><div class="k-tarefa-tit">'+escapeHtml(t.titulo||t.canal||"Tarefa")+'</div>'+
+          '<div class="k-tarefa-meta"><span>'+escapeHtml(t.canal||"Tarefa")+' · '+quandoTarefaCurto(t.vencimento_em)+'</span>'+(overdue? '<span class="k-atraso">· atrasada</span>' : '')+'</div></div>'+
+        '<button type="button" class="k-tarefa-ok kanban-card-noopen" data-concluir-tarefa-lead="'+t.id+'" title="Concluir tarefa" aria-label="Concluir tarefa">✓</button>'+
+      '</div>';
     }).join("")+
   '</div>';
 }
