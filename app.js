@@ -717,7 +717,7 @@ function viewClientes(){
       '</div>'+
       vidasValoresHtml(c)+
       '<div class="client-card-foot">'+
-        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">tabela & upgrade</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
+        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">tabela & upgrade</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(podeVerFinanceiro()? ' <button class="linklike" data-fin-cliente="'+c.id+'">💰 financeiro</button>' : '')+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
       '</div>'+
     '</div>';
   }).join("")+'</div>');
@@ -1431,6 +1431,8 @@ function openFinanceiroModal(cliente){
   var taxaImposto = state.params.taxa_imposto||0;
   var body =
     '<div class="kv-list" style="margin-bottom:12px;">'+
+      '<div class="kv-row"><span class="k">Início de vigência</span><span><b>'+(cliente.vigencia_inicio? fmtDateISO(cliente.vigencia_inicio) : '<span class="muted">não preenchido</span>')+'</b>'+(cliente.vigencia_fim? ' <span class="muted">até '+fmtDateISO(cliente.vigencia_fim)+'</span>' : '')+'</span></div>'+
+      '<div class="kv-row"><span class="k">Data de fechamento</span><span>'+fmtDateISO(cliente.data_fechamento || cliente.data_inclusao)+'</span></div>'+
       '<div class="kv-row"><span class="k">Valor do contrato</span><span>'+fmtMoney(cliente.valor_contrato_total)+'</span></div>'+
       '<div class="kv-row"><span class="k">Comissão esperada (3 parcelas · 300%)</span><span>'+fmtMoney(esperado300)+'</span></div>'+
     '</div>'+
@@ -1614,6 +1616,7 @@ function comissaoCfgFormHtml(c){
   var pctAtual = c.comissao_vitalicio_pct != null ? c.comissao_vitalicio_pct : (state.params.percentual_vitalicio||0)*100;
   return '<fieldset><legend>Comissão deste contrato (o que já entrou e o que falta)</legend>'+
     '<div class="helpbox" style="margin-bottom:8px;">Tudo aqui é <b>manual</b>: marque o que <b>já recebeu</b> e o que <b>ainda vai receber</b>, com o mês. Só entra no fluxo de caixa a parcela marcada "A receber" e o vitalício marcado "Sim" — o que estiver "— definir —" fica de fora. Nada aqui lança dinheiro no financeiro.</div>'+
+    (c.vigencia_inicio? '<div class="rowflex" style="margin-bottom:8px;gap:8px;align-items:center;"><span class="muted" style="font-size:12.5px;">Pela vigência ('+fmtDateISO(c.vigencia_inicio)+'): '+[0,1,2].slice(0,nParcelasCheias()).map(function(k){ return 'P'+(k+1)+' '+monthLabel(monthKeyAdd(monthKeyFromISO(c.vigencia_inicio),k)); }).join(' · ')+'</span><button type="button" class="linklike" id="cc-meses-vig">usar esses meses</button></div>' : '<div class="muted" style="font-size:12.5px;margin-bottom:8px;">Início de vigência não preenchido no cadastro do cliente.</div>')+
     '<div class="rowflex" style="margin-bottom:8px;"><button type="button" class="btn btn-ghost btn-sm" id="cc-300-ok">✓ Já recebi os '+(nParcelasCheias()*100)+'% (só vitalício daqui pra frente)</button></div>'+
     ps.map(function(p){
       var stSel = p.status==="indefinida" ? "" : p.status;
@@ -1629,6 +1632,13 @@ function comissaoCfgFormHtml(c){
   '</fieldset>';
 }
 function wireComissaoCfgForm(cliente, reabrir){
+  var bMeses = document.getElementById("cc-meses-vig");
+  if(bMeses) bMeses.onclick = function(){
+    var base = monthKeyFromISO(cliente.vigencia_inicio);
+    for(var i=1;i<=nParcelasCheias();i++){ var m = document.getElementById("cc-p"+i+"-mes"); if(m) m.value = monthKeyAdd(base, i-1); }
+    var vi = document.getElementById("cc-vit-inicio"); if(vi && !((comissaoCfg(cliente)||{}).vitalicio_inicio)) vi.value = monthKeyAdd(base, nParcelasCheias());
+    toast("Meses preenchidos pela vigência — confira e clique em Salvar comissão.");
+  };
   var b300 = document.getElementById("cc-300-ok");
   if(b300) b300.onclick = function(){
     for(var i=1;i<=nParcelasCheias();i++){ var s = document.getElementById("cc-p"+i+"-status"); if(s) s.value = "recebida"; }
@@ -1696,7 +1706,7 @@ function viewFinanceiro(){
     '<label class="rowflex" style="font-weight:400;font-size:12.5px;padding-bottom:9px;white-space:nowrap;"><input type="checkbox" id="fin-pendentes" '+(finFiltro.pendentes?'checked':'')+'> só os que faltam definir</label>'+
   '</div>';
   var tabela = '<div class="card"><div class="card-head"><h2>Comissão por cliente</h2><div class="meta">'+lista.length+' de '+todos.length+' · tudo manual: marque o que já recebeu, o que falta e se tem vitalício</div></div><div class="card-body"><div class="tablewrap"><table class="grid"><thead><tr>'+
-    '<th style="min-width:200px;">Cliente</th><th class="num">Valor contrato</th><th>Fechamento</th><th>300%</th><th>Vitalício</th><th class="num">Previsto '+monthLabel(hoje)+'</th><th class="num">Lançado</th><th>Status</th><th></th>'+
+    '<th style="min-width:200px;">Cliente</th><th class="num">Valor contrato</th><th>Início vigência</th><th>300%</th><th>Vitalício</th><th class="num">Previsto '+monthLabel(hoje)+'</th><th class="num">Lançado</th><th>Status</th><th></th>'+
     '</tr></thead><tbody>'+
     lista.map(function(c){
       var cfg = comissaoCfg(c) || {}, vitSel = cfg.vitalicio===true ? "sim" : (cfg.vitalicio===false ? "nao" : "");
@@ -1705,7 +1715,7 @@ function viewFinanceiro(){
       return '<tr>'+
         '<td><b>'+escapeHtml(clienteLabel(c))+'</b>'+(c.titular_nome && c.razao_social? '<div class="muted" style="font-size:12px;">'+escapeHtml(c.titular_nome)+'</div>' : '')+'</td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(c.valor_contrato_total)+'</td>'+
-        '<td style="white-space:nowrap;">'+fmtDateISO(c.data_fechamento || c.data_inclusao)+'</td>'+
+        '<td style="white-space:nowrap;">'+(c.vigencia_inicio? fmtDateISO(c.vigencia_inicio) : '<span class="muted" title="Fechamento">fech. '+fmtDateISO(c.data_fechamento || c.data_inclusao)+'</span>')+'</td>'+
         '<td style="white-space:nowrap;">'+resumo300Html(c)+(falta? ' <button class="linklike" data-fin-300="'+c.id+'" title="Marcar as parcelas cheias como já recebidas">✓ recebido</button>' : '')+'</td>'+
         '<td><select class="fin-vit-rapido" data-fin-vit="'+c.id+'" style="min-width:96px;"><option value=""'+(vitSel===""?' selected':'')+'>?</option><option value="sim"'+(vitSel==="sim"?' selected':'')+'>Sim</option><option value="nao"'+(vitSel==="nao"?' selected':'')+'>Não</option></select></td>'+
         '<td class="num" style="white-space:nowrap;">'+fmtMoney(prev.parcelas+prev.bonus+prev.vitalicio)+'</td>'+
@@ -4690,6 +4700,7 @@ function wireActions(){
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-hist-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-hist-cliente");})[0]; if(c) openHistoricoModal(c); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-fin-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-fin-cliente");})[0]; if(c && podeVerFinanceiro()) openFinanceiroModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-acesso-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-acesso-cliente");})[0]; if(c) acessoPortalModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-carencias-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-carencias-cliente");})[0]; if(c) openCarenciasModal(c); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-del-cliente]"), function(btn){
