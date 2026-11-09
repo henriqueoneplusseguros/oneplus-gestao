@@ -2560,7 +2560,9 @@ function requestEtapaChange(leadId, novaEtapa, onCancel, onDone){
       setLeadEtapa(leadId, novaEtapa, motivo).then(function(ok){
         if(ok && retorno && retorno.data){
           var atual = state.leads.filter(function(l){ return l.id===leadId; })[0] || lead;
-          return agendarRetorno(atual, retorno.data, retorno.obs);
+          return agendarRetorno(atual, retorno.data, retorno.obs, retorno.canal).then(function(){
+            toast("Movido para Contatos futuros · retomar em "+fmtDateISO(retorno.data)+" ("+retorno.canal+").");
+          });
         }
       }).then(function(){ if(onDone) onDone(); });
     }, onCancel);
@@ -2573,15 +2575,17 @@ function openMotivoPerdaModal(lead, onConfirm, onCancel){
       MOTIVOS_PERDA.map(function(m){ return '<option>'+m+'</option>'; }).join("")+
     '</select></div>'+
     '<div class="field" id="mp-outro-wrap" style="display:none;"><label>Qual motivo?</label><input id="mp-outro"></div>'+
-    retornoCamposHtml("mpr", lead.retomar_em, lead.retomar_obs, true);
-  openModal("Motivo da perda — "+(lead.nome||lead.empresa||"negócio"), body, function(closeFn){
+    retornoCamposHtml("mpr", lead.retomar_em || addMonthsISO(todayISO(), 3), lead.retomar_obs, false, "Ligar");
+  body = '<div class="muted" style="margin-bottom:10px;font-size:12.5px;">O negócio sai do funil e vai para <b>Contatos futuros</b>. Escolha quando e como retomar: vira uma tarefa no dia.</div>'+body;
+  openModal("Perdido — "+(lead.nome||lead.empresa||"negócio"), body, function(closeFn){
     var sel = document.getElementById("mp-motivo").value;
     var outroEl = document.getElementById("mp-outro");
     var motivo = sel==="Outro" ? (outroEl? outroEl.value.trim() : "") : sel;
     var retorno = lerRetornoCampos("mpr");
+    if(!retorno.data){ toast("Escolha quando retomar o contato."); return; }
     closeFn();
     onConfirm(motivo, retorno);
-  }, "Marcar como perdido");
+  }, "Mover para Contatos futuros");
   wireRetornoCampos("mpr");
   var sel = document.getElementById("mp-motivo");
   var wrap = document.getElementById("mp-outro-wrap");
@@ -2783,7 +2787,9 @@ function viewFunil(){
   var metaQtd = state.params.meta_vendas_mensal||0;
   var faltamQtd = Math.max(metaQtd - vendasQtdMes, 0);
 
-  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+leadsBase.length+' de '+state.leads.length+' oportunidade(s) · arraste o cartão (ou clique nele) · negócios ganhos seguem na aba Implantação</div><div style="margin-top:6px;">'+tempLegendaHtml()+' <span class="muted" style="font-size:12px;">· clique na bolinha do cartão para trocar</span></div></div><div class="rowflex">'+(podeVerRelatorios()? '<button class="btn btn-ghost" id="btn-relatorios">📊 Relatórios</button>' : '')+'<button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div></div>';
+  var leadsPipe = leadsBase.filter(function(l){ return l.etapa!=="Perdido"; });
+  var totalPipe = state.leads.filter(function(l){ return l.etapa!=="Perdido"; }).length;
+  var header = '<div class="topbar"><div><h1>Funil Comercial</h1><div class="desc">'+leadsPipe.length+' de '+totalPipe+' oportunidade(s) · perdidos ficam em Contatos futuros · arraste o cartão (ou clique nele) · negócios ganhos seguem na aba Implantação</div><div style="margin-top:6px;">'+tempLegendaHtml()+' <span class="muted" style="font-size:12px;">· clique na bolinha do cartão para trocar</span></div></div><div class="rowflex">'+(podeVerRelatorios()? '<button class="btn btn-ghost" id="btn-relatorios">📊 Relatórios</button>' : '')+'<button class="btn btn-primary" id="btn-novo-lead">+ Nova oportunidade</button></div></div>';
 
   var abertosFiltrados = leadsBase.filter(function(l){ return l.etapa!=="Ganho" && l.etapa!=="Perdido"; });
   var valorAberto = abertosFiltrados.reduce(function(s,l){ return s+(l.valor_estimado||0); },0);
@@ -2809,12 +2815,12 @@ function viewFunil(){
   }
 
   var filterBar = funilFilterBarHtml();
-  var corpo = funilView==="lista" ? viewFunilLista(leadsBase, agoraISO) : viewFunilKanban(byEtapa, agoraISO);
+  var corpo = funilView==="lista" ? viewFunilLista(leadsPipe, agoraISO) : viewFunilKanban(byEtapa, agoraISO);
 
   return header + pipeTiles + metaChart + historicoVendas + atrasoBanner + filterBar + corpo;
 }
 function viewFunilKanban(byEtapa, agoraISO){
-  var ETAPAS_PIPELINE = ETAPAS.filter(function(e){ return e!=="Ganho"; });
+  var ETAPAS_PIPELINE = ETAPAS.filter(function(e){ return e!=="Ganho" && e!=="Perdido"; });
   return '<div class="kanban-board">'+ETAPAS_PIPELINE.map(function(etapa){
     var items = (byEtapa[etapa]||[]).map(function(l,i){ return {l:l,i:i}; }).sort(function(a,b){ return (tempRank(a.l)-tempRank(b.l)) || (a.i-b.i); }).map(function(x){ return x.l; });
     var total = items.reduce(function(s,l){return s+(l.valor_estimado||0);},0);
@@ -2844,7 +2850,20 @@ function viewFunilKanban(byEtapa, agoraISO){
         '</div>';
       }).join(""))+
       '</div></div>';
-  }).join("")+'</div>';
+  }).join("")+kanbanColPerdidoHtml()+'</div>';
+}
+/* Perdido não é mais coluna do pipeline: é uma zona de soltar que manda o negócio para Contatos futuros. */
+function kanbanColPerdidoHtml(){
+  var mk = todayMonthKey();
+  var doMes = state.leads.filter(function(l){ return l.etapa==="Perdido" && monthKeyFromISO(dataPerdaDoLead(l))===mk; });
+  var valor = doMes.reduce(function(s,l){ return s+(l.valor_estimado||0); },0);
+  return '<div class="kanban-col" style="flex:0 0 200px;width:200px;border-style:dashed;">'+
+    '<div class="kanban-col-head"><h3 style="color:var(--danger);">Perdido</h3><div class="meta">vai para Contatos futuros</div></div>'+
+    '<div class="kanban-col-body" data-drop-etapa="Perdido" style="display:flex;flex-direction:column;justify-content:center;">'+
+      '<div class="empty" style="padding:18px 8px;line-height:1.5;">Arraste o cartão aqui para marcar como perdido.<br>Ele sai do funil, vai para <b>Contatos futuros</b> e você agenda quando retomar.'+
+      '<div style="margin-top:12px;font-size:12px;">'+monthLabel(mk)+': <b>'+doMes.length+'</b> perdido(s) · '+fmtMoney(valor)+'</div>'+
+      '<button class="btn btn-ghost btn-sm" type="button" data-ir-retornos style="margin-top:10px;">Ver contatos futuros</button></div>'+
+    '</div></div>';
 }
 function viewFunilLista(leads, agoraISO){
   if(!leads.length) return '<div class="card"><div class="card-body"><div class="empty">Nenhuma oportunidade encontrada com esses filtros.</div></div></div>';
@@ -3251,6 +3270,10 @@ function openLeadModal(existing, onSaved, seed){
     if(leadId && novaEtapa==="Ganho"){ await ensureImplantacao(leadId); }
     closeFn();
     if(onSaved) onSaved(leadId);
+    if(novaEtapa==="Perdido" && (!existing || existing.etapa!=="Perdido")){
+      var lp = state.leads.filter(function(x){ return x.id===leadId; })[0];
+      if(lp && !lp.retomar_em) openRetornoModal(lp);
+    }
   });
   wireLeadFormExtra();
 }
@@ -4221,13 +4244,13 @@ function wireRelatorios(){
 var RETORNO_ATALHOS = [[2,"2 meses"],[3,"3 meses"],[4,"4 meses"],[6,"6 meses"],[12,"1 ano"]];
 var RETORNO_TITULO = "Retomar contato";
 var retornoFiltro = {busca:"", vendedor:""};
-function retornoCamposHtml(prefixo, dataISO, obs, opcional){
+function retornoCamposHtml(prefixo, dataISO, obs, opcional, canal){
   return '<fieldset style="margin-top:10px;"><legend>Retomar contato no futuro'+(opcional? ' (opcional)' : '')+'</legend>'+
     '<div class="rowflex" style="gap:6px;flex-wrap:wrap;">'+
       RETORNO_ATALHOS.map(function(a){ return '<button type="button" class="btn btn-ghost btn-sm" data-'+prefixo+'-meses="'+a[0]+'">'+a[1]+'</button>'; }).join("")+
     '</div>'+
-    '<div class="field row2"><div class="field"><label>Data para retomar</label><input type="date" id="'+prefixo+'-data" value="'+escapeHtml((dataISO||"").slice(0,10))+'"></div>'+
-      '<div class="field"><label>&nbsp;</label><span class="muted" id="'+prefixo+'-quando" style="font-size:12px;padding-top:9px;"></span></div></div>'+
+    '<div class="field row2"><div class="field"><label>Data para retomar</label><input type="date" id="'+prefixo+'-data" value="'+escapeHtml((dataISO||"").slice(0,10))+'"><span class="muted" id="'+prefixo+'-quando" style="font-size:12px;"></span></div>'+
+      '<div class="field"><label>Como retomar</label><select id="'+prefixo+'-canal">'+CANAIS_RETORNO.map(function(c){ return '<option'+((canal||"Ligar")===c?' selected':'')+'>'+c+'</option>'; }).join("")+'</select></div></div>'+
     '<div class="field"><label>O que combinou / o que falar</label><input id="'+prefixo+'-obs" value="'+escapeHtml(obs||"")+'" placeholder="ex: Dr. pediu para ligar em março; avisar quando tiver campanha Amil"></div>'+
     (opcional? '<div class="muted" style="font-size:11.5px;">Deixe a data em branco se não for retomar. Com data, o lead aparece em "Contatos futuros" e vira uma tarefa no dia.</div>' : '')+
   '</fieldset>';
@@ -4249,14 +4272,17 @@ function wireRetornoCampos(prefixo){
   if(data) data.addEventListener("change", atualiza);
   atualiza();
 }
+var CANAIS_RETORNO = ["Ligar","WhatsApp","E-mail","Reunião","Campanha"];
 function lerRetornoCampos(prefixo){
-  var d = document.getElementById(prefixo+"-data"), o = document.getElementById(prefixo+"-obs");
-  return {data: d && d.value ? d.value : null, obs: o ? o.value.trim() : ""};
+  var d = document.getElementById(prefixo+"-data"), o = document.getElementById(prefixo+"-obs"), c = document.getElementById(prefixo+"-canal");
+  return {data: d && d.value ? d.value : null, obs: o ? o.value.trim() : "", canal: c ? c.value : "Ligar"};
 }
+function canalRetornoAtual(lead){ var t = tarefasRetornoAbertas(lead.id)[0]; if(!t) return "Ligar"; return /^\[Campanha\]/.test(t.descricao||"") ? "Campanha" : (t.canal||"Ligar"); }
 function tarefasRetornoAbertas(leadId){
   return state.tarefas.filter(function(t){ return t.lead_id===leadId && t.status!=="Concluída" && String(t.titulo||"").indexOf(RETORNO_TITULO)===0; });
 }
-async function agendarRetorno(lead, dataISO, obs){
+async function agendarRetorno(lead, dataISO, obs, canal){
+  canal = canal || "Ligar";
   var r = await sb.from("leads").update({retomar_em: dataISO, retomar_obs: obs || null}).eq("id", lead.id);
   if(r.error){
     console.error(r.error);
@@ -4269,9 +4295,9 @@ async function agendarRetorno(lead, dataISO, obs){
     var venc = new Date(dataISO+"T09:00:00");
     await sb.from("tarefas").insert({
       tipo:"Tarefa", titulo: RETORNO_TITULO+" — "+(lead.nome||lead.empresa||"lead"),
-      responsavel: lead.vendedor || currentUserName() || "Henrique", lead_id: lead.id, canal: "Ligar",
+      responsavel: lead.vendedor || currentUserName() || "Henrique", lead_id: lead.id, canal: canal==="Campanha" ? "Outro" : canal,
       vencimento_em: venc.toISOString(), data_vencimento: dataISO, status: "Pendente",
-      descricao: obs || ("Lead perdido por: "+(lead.motivo_perda||"—")), criado_por: currentUser()
+      descricao: (canal==="Campanha" ? "[Campanha] " : "")+(obs || ("Lead perdido por: "+(lead.motivo_perda||"—"))), criado_por: currentUser()
     });
   }
   await reload("tarefas");
@@ -4282,11 +4308,11 @@ async function agendarRetorno(lead, dataISO, obs){
 function openRetornoModal(lead, onDone){
   openModal((lead.retomar_em? "Adiar retorno — " : "Agendar retorno — ")+(lead.nome||lead.empresa||"lead"),
     (lead.motivo_perda? '<div class="muted" style="margin-bottom:6px;">Perdido por: <b>'+escapeHtml(lead.motivo_perda)+'</b></div>' : '')+
-    retornoCamposHtml("rt", lead.retomar_em, lead.retomar_obs, false),
+    retornoCamposHtml("rt", lead.retomar_em || addMonthsISO(todayISO(), 3), lead.retomar_obs, false, canalRetornoAtual(lead)),
     async function(fechar){
       var r = lerRetornoCampos("rt");
       if(!r.data){ toast("Escolha a data para retomar."); return; }
-      var ok = await agendarRetorno(lead, r.data, r.obs);
+      var ok = await agendarRetorno(lead, r.data, r.obs, r.canal);
       if(ok){ fechar(); if(onDone) onDone(); else render(); }
     }, "Salvar retorno");
   wireRetornoCampos("rt");
@@ -4358,6 +4384,54 @@ function retornoTabelaHtml(lista){
   return '<div class="tablewrap"><table class="grid"><thead><tr><th>Retomar em</th><th>Lead</th><th>Telefone</th><th>Vendedor(a)</th><th>Perdido por</th><th>Combinado</th><th></th></tr></thead><tbody>'+
     lista.map(retornoLinhaHtml).join("")+'</tbody></table></div>';
 }
+/* ===== Relatório mensal de perdidos (só quem vê Relatórios) ===== */
+var relPerdidosAberto = false, relPerdidosMes = null;
+function dataPerdaDoLead(l){
+  var evs = eventosDoLead(l.id).filter(function(e){ return e.tipo==="etapa" && e.dados && e.dados.para==="Perdido"; });
+  if(evs.length) return evs[evs.length-1].criado_em;
+  return l.etapa_atualizada_em || l.criado_em;
+}
+function perdidosDoMes(mk){ return state.leads.filter(function(l){ return l.etapa==="Perdido" && monthKeyFromISO(dataPerdaDoLead(l))===mk; }); }
+function statusRetornoTexto(l){ return l.retomado_em ? "retomado em "+fmtDateISO(l.retomado_em) : (l.retomar_em ? "retomar em "+fmtDateISO(l.retomar_em) : "sem data"); }
+function relatorioPerdidosHtml(){
+  if(!podeVerRelatorios()) return "";
+  var mesAtual = todayMonthKey();
+  var atual = perdidosDoMes(mesAtual), vAtual = atual.reduce(function(s,l){ return s+(l.valor_estimado||0); },0);
+  var head = '<div class="card-head"><h2>📉 Relatório mensal de perdidos</h2><div class="meta">'+monthLabel(mesAtual)+': '+atual.length+' perdido(s) · '+fmtMoney(vAtual)+'/mês</div>'+
+    '<button class="btn btn-ghost" type="button" id="btn-rel-perdidos">'+(relPerdidosAberto? 'Ocultar' : 'Ver relatório')+'</button></div>';
+  if(!relPerdidosAberto) return '<div class="card">'+head+'</div>';
+  var meses = []; for(var i=0;i<12;i++) meses.push(monthKeyAdd(mesAtual,-i));
+  var sel = relPerdidosMes || mesAtual;
+  var linhas = meses.map(function(mk){
+    var L = perdidosDoMes(mk), v = L.reduce(function(s,l){ return s+(l.valor_estimado||0); },0), vidas = L.reduce(function(s,l){ return s+(l.quantidade_vidas||0); },0);
+    var mot = {}; L.forEach(function(l){ var m = l.motivo_perda||"Sem motivo"; mot[m]=(mot[m]||0)+1; });
+    var top = Object.keys(mot).sort(function(a,b){ return mot[b]-mot[a]; })[0];
+    return '<tr class="rowlink" data-rel-perdidos-mes="'+mk+'" style="cursor:pointer;'+(L.length?'':'opacity:.5;')+(mk===sel?'background:var(--accent-blue-bg);':'')+'">'+
+      '<td>'+monthLabel(mk)+(mk===mesAtual?' <span class="tag">atual</span>':'')+'</td><td class="num">'+L.length+'</td><td class="num">'+fmtMoney(v)+'</td><td class="num">'+(vidas||"—")+'</td>'+
+      '<td>'+(top? escapeHtml(top)+(mot[top]>1? ' ('+mot[top]+')' : '') : '—')+'</td>'+
+      '<td class="num">'+L.filter(function(l){ return l.retomar_em && !l.retomado_em; }).length+'</td><td class="num">'+L.filter(function(l){ return l.retomado_em; }).length+'</td></tr>';
+  }).join("");
+  var D = perdidosDoMes(sel).sort(function(a,b){ return (b.valor_estimado||0)-(a.valor_estimado||0); });
+  var porVend = {}; D.forEach(function(l){ var k=l.vendedor||"—"; porVend[k]=porVend[k]||{n:0,v:0}; porVend[k].n++; porVend[k].v+=(l.valor_estimado||0); });
+  var detalhe = '<h3 style="margin:16px 0 6px;">'+monthLabel(sel)+' · '+D.length+' perdido(s) · '+fmtMoney(D.reduce(function(s,l){ return s+(l.valor_estimado||0); },0))+'/mês'+
+      (Object.keys(porVend).length? ' <span class="muted" style="font-weight:400;font-size:12.5px;">· '+Object.keys(porVend).map(function(k){ return escapeHtml(k)+': '+porVend[k].n+' ('+fmtMoney(porVend[k].v)+')'; }).join(" · ")+'</span>' : '')+'</h3>'+
+    (D.length? '<div class="tablewrap"><table class="grid"><thead><tr><th>Perdido em</th><th>Negócio</th><th>Vendedor(a)</th><th>Produto · operadora</th><th class="num">Vidas</th><th class="num">Valor/mês</th><th>Motivo</th><th>Contato futuro</th></tr></thead><tbody>'+
+      D.map(function(l){ return '<tr class="rowlink" data-retorno-abrir="'+l.id+'" style="cursor:pointer;"><td>'+fmtDateISO(String(dataPerdaDoLead(l)).slice(0,10))+'</td><td>'+escapeHtml(l.nome||"—")+(l.empresa?' <span class="muted">('+escapeHtml(l.empresa)+')</span>':'')+'</td><td>'+escapeHtml(l.vendedor||"—")+'</td><td>'+escapeHtml((l.produto||"—")+(l.operadora?' · '+l.operadora:''))+'</td><td class="num">'+(l.quantidade_vidas||"—")+'</td><td class="num">'+fmtMoney(l.valor_estimado)+'</td><td>'+escapeHtml(l.motivo_perda||"—")+'</td><td>'+statusRetornoTexto(l)+'</td></tr>'; }).join("")+
+    '</tbody></table></div>' : '<div class="empty">Nenhum negócio perdido em '+monthLabel(sel)+'.</div>');
+  return '<div class="card">'+head+'<div class="card-body">'+
+    '<div class="rowflex" style="justify-content:space-between;margin-bottom:8px;"><span class="muted" style="font-size:12.5px;">Mês em que o negócio foi marcado como perdido · valor = mensalidade estimada da proposta · clique num mês para ver os negócios</span><button class="btn btn-ghost btn-sm" type="button" id="btn-rel-perdidos-xls">Exportar Excel (12 meses)</button></div>'+
+    '<div class="tablewrap"><table class="grid"><thead><tr><th>Mês</th><th class="num">Perdidos</th><th class="num">Valor/mês perdido</th><th class="num">Vidas</th><th>Motivo mais comum</th><th class="num">Com retorno</th><th class="num">Retomados</th></tr></thead><tbody>'+linhas+'</tbody></table></div>'+
+    detalhe+'</div></div>';
+}
+function exportarPerdidosExcel(){
+  var mesAtual = todayMonthKey(), rows = [];
+  for(var i=0;i<12;i++){ var mk = monthKeyAdd(mesAtual,-i);
+    perdidosDoMes(mk).forEach(function(l){ rows.push({"Mês": monthLabel(mk), "Perdido em": String(dataPerdaDoLead(l)).slice(0,10), "Negócio": l.nome||"", "Empresa": l.empresa||"", "Vendedor(a)": l.vendedor||"", "Produto": l.produto||"", "Operadora": l.operadora||"", "Vidas": l.quantidade_vidas||"", "Valor/mês": l.valor_estimado||0, "Motivo": l.motivo_perda||"", "Retomar em": l.retomar_em||"", "Retomado em": l.retomado_em? String(l.retomado_em).slice(0,10) : "", "O que falar": l.retomar_obs||"", "Telefone": l.telefone||""}); }); }
+  if(!rows.length){ toast("Nenhum perdido nos últimos 12 meses."); return; }
+  var ws = XLSX.utils.json_to_sheet(rows), wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Perdidos");
+  XLSX.writeFile(wb, "perdidos-oneplus-"+mesAtual+".xlsx");
+}
 function viewRetornos(){
   var hoje = todayISO(), mesAtual = todayMonthKey();
   var agendados = state.leads.filter(function(l){ return l.etapa==="Perdido" && l.retomar_em; })
@@ -4368,7 +4442,7 @@ function viewRetornos(){
   var futuros = lista.filter(function(l){ return String(l.retomar_em).slice(0,10) >= hoje; });
   var esteMes = futuros.filter(function(l){ return monthKeyFromISO(l.retomar_em)===mesAtual; });
   var em90 = futuros.filter(function(l){ return daysBetween(hoje, String(l.retomar_em).slice(0,10)) <= 90; });
-  var header = '<div class="topbar"><div><h1>Contatos futuros</h1><div class="desc">Leads perdidos com data combinada para voltar a falar · cada um vira uma tarefa no dia do retorno</div></div></div>';
+  var header = '<div class="topbar"><div><h1>Contatos futuros</h1><div class="desc">Todo negócio marcado como perdido vem para cá · cada um tem uma data para retomar, que vira tarefa no dia</div></div></div>';
   var tiles = '<div class="tiles">'+
     tile("Atrasados", atrasados.length, atrasados.length? "já passou da data — ligar" : "nenhum atrasado")+
     tile("Este mês", esteMes.length, monthLabel(mesAtual))+
@@ -4388,10 +4462,13 @@ function viewRetornos(){
   if(!lista.length) blocos += '<div class="card"><div class="card-body"><div class="empty">Nenhum contato futuro agendado'+(retornoFiltro.busca||retornoFiltro.vendedor? ' com esses filtros' : '')+'. Ao marcar um negócio como "Perdido" no funil, preencha "Retomar contato em" — ou use "+ agendar retorno" nos perdidos abaixo.</div></div></div>';
   var semDataF = retornosFiltrados(semData);
   if(semDataF.length) blocos += '<div class="card"><div class="card-head"><h2>Perdidos sem data de retorno</h2><div class="meta">'+semDataF.length+' · agende os que valem uma nova tentativa</div></div><div class="card-body">'+retornoTabelaHtml(semDataF)+'</div></div>';
-  return header + tiles + filtros + blocos;
+  return header + tiles + relatorioPerdidosHtml() + filtros + blocos;
 }
 function wireRetornos(){
   if(state.tab!=="retornos") return;
+  var brp = document.getElementById("btn-rel-perdidos"); if(brp) brp.onclick = function(){ relPerdidosAberto = !relPerdidosAberto; render(); };
+  var bxl = document.getElementById("btn-rel-perdidos-xls"); if(bxl) bxl.onclick = exportarPerdidosExcel;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-rel-perdidos-mes]"), function(r){ r.onclick = function(){ relPerdidosMes = r.getAttribute("data-rel-perdidos-mes"); render(); }; });
   var busca = document.getElementById("rt-busca");
   if(busca) busca.oninput = function(){ retornoFiltro.busca = busca.value; render(); var el = document.getElementById("rt-busca"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } };
   var vend = document.getElementById("rt-vendedor"); if(vend) vend.onchange = function(){ retornoFiltro.vendedor = vend.value; render(); };
@@ -5203,6 +5280,7 @@ function wireActions(){
     });
     card.addEventListener("dragend", function(){ card.classList.remove("dragging"); });
   });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ir-retornos]"), function(b){ b.onclick = function(){ state.tab = "retornos"; render(); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-drop-etapa]"), function(col){
     col.addEventListener("dragover", function(e){ e.preventDefault(); col.classList.add("drag-over"); });
     col.addEventListener("dragleave", function(){ col.classList.remove("drag-over"); });
