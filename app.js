@@ -47,7 +47,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [], lead_anexos: [], lead_eventos: [],
+    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [], lead_anexos: [], lead_eventos: [], consorcio_leads: [], consorcio_tarefas: [], consorcio_notas: [], perfil: null, acessoNome: null,
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -280,6 +280,7 @@ loginForm.addEventListener("submit", async function(e){
 
 document.getElementById("btn-logout").addEventListener("click", async function(){
   await sb.auth.signOut();
+  location.reload();
 });
 
 document.getElementById("btn-notif").addEventListener("click", function(e){
@@ -317,8 +318,9 @@ sb.auth.onAuthStateChange(function(event, session){
     document.getElementById("login-screen").style.display = "none";
     document.getElementById("app-shell").style.display = "flex";
     document.getElementById("current-email").textContent = session.user.email;
-    loadAll();
+    iniciarSessao();
   } else {
+    if(state.perfil){ location.reload(); return; } /* saiu da conta: limpa tudo da memória */
     document.getElementById("login-screen").style.display = "flex";
     document.getElementById("app-shell").style.display = "none";
   }
@@ -362,6 +364,23 @@ function showRecoveryScreen(){
 }
 
 /* ================= data loading ================= */
+/* Descobre o perfil de acesso de quem entrou (banco: usuarios_perfis via meu_acesso()).
+   'total' carrega o sistema inteiro; 'consorcio' carrega só o Funil Consórcio; sem perfil = sem acesso.
+   A proteção de verdade está no banco (políticas restritivas); aqui só decide o que mostrar. */
+async function iniciarSessao(){
+  var r = await sb.rpc("meu_acesso");
+  if(r.error){ console.error(r.error); state.perfil = "erro"; state.loading = false; render(); return; }
+  var a = r.data || null;
+  state.perfil = a && a.perfil ? a.perfil : "nenhum";
+  state.acessoNome = (a && a.nome) || null;
+  if(state.perfil==="total"){ await loadAll(); return; }
+  if(state.perfil==="consorcio"){
+    state.tab = "consorcio"; state.loading = true; render();
+    await loadConsorcio();
+  }
+  state.loading = false;
+  render();
+}
 async function loadAll(){
   state.loading = true;
   try{
@@ -407,6 +426,7 @@ async function loadAll(){
     state.lead_anexos = anx.error ? [] : (anx.data || []);
     var evs = await sb.from("lead_eventos").select("*").order("criado_em");
     state.lead_eventos = evs.error ? [] : (evs.data || []);
+    await loadConsorcio();
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
   render();
@@ -430,7 +450,10 @@ async function reload(table){
         lead_notas: function(){ return sb.from("lead_notas").select("*").order("criado_em",{ascending:false}); },
         comissoes_recebidas: function(){ return sb.from("comissoes_recebidas").select("*").order("data_recebimento",{ascending:false}); },
         lead_anexos: function(){ return sb.from("lead_anexos").select("*").order("criado_em",{ascending:false}); },
-        lead_eventos: function(){ return sb.from("lead_eventos").select("*").order("criado_em"); }
+        lead_eventos: function(){ return sb.from("lead_eventos").select("*").order("criado_em"); },
+        consorcio_leads: function(){ return sb.from("consorcio_leads").select("*").order("criado_em",{ascending:false}); },
+        consorcio_tarefas: function(){ return sb.from("consorcio_tarefas").select("*").order("vencimento_em"); },
+        consorcio_notas: function(){ return sb.from("consorcio_notas").select("*").order("criado_em",{ascending:false}); }
   };
   var r = await map[table]();
   if(r.error){ console.error(r.error); toast("Erro ao atualizar "+table); return; }
@@ -443,7 +466,7 @@ function currentUser(){ return (state.session && state.session.user && state.ses
 function currentUserName(){
   var email = currentUser().toLowerCase();
   var e = state.equipe.filter(function(x){ return (x.email||"").toLowerCase()===email; })[0];
-  return e ? e.nome : null;
+  return e ? e.nome : (state.acessoNome || null);
 }
 function emailDoResponsavel(nome){
   var e = state.equipe.filter(function(x){ return x.nome===nome; })[0];
@@ -526,6 +549,7 @@ var NAV = [
   {id:"painel", label:"Painel", icon:"grid"},
   {id:"clientes", label:"Clientes", icon:"users"},
   {id:"funil", label:"Funil Comercial", icon:"filter"},
+  {id:"consorcio", label:"Funil Consórcio", icon:"coins"},
   {id:"retornos", label:"Contatos futuros", icon:"clock"},
   {id:"relatorios", label:"Relatórios", icon:"chart"},
   {id:"empresas", label:"Empresas", icon:"building"},
@@ -549,12 +573,13 @@ var ICONS = {
   building:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16"/><path d="M15 9h4a1 1 0 0 1 1 1v11"/><path d="M3 21h18M8 8h3M8 12h3M8 16h3"/></svg>',
   chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  coins:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="9" cy="7" rx="6" ry="3"/><path d="M3 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7"/><path d="M9 15v3c0 1.7 2.7 3 6 3s6-1.3 6-3v-5c0-1.7-2.7-3-6-3"/></svg>',
   receipt:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>'
 };
 var NAV_GRUPOS = [
   {nome:null, itens:["painel"]},
   {nome:null, itens:["clientes"]},
-  {nome:null, itens:["funil","retornos","relatorios","empresas"]},
+  {nome:null, itens:["funil","consorcio","retornos","relatorios","empresas"]},
   {nome:null, itens:["implantacao"]},
   {nome:"Concierge", itens:["tarefas","agenda","posvenda"]},
   {nome:"Gestão", itens:["financeiro","parametros"]}
@@ -562,7 +587,10 @@ var NAV_GRUPOS = [
 function navGrupoAberto(nome){ try { return localStorage.getItem("op-menu-"+nome) !== "0"; } catch(e){ return true; } }
 function renderNav(){
   var nav = document.getElementById("nav");
-  var itens = NAV.filter(function(n){ if(n.id==="financeiro") return podeVerFinanceiro(); if(n.id==="relatorios") return podeVerRelatorios(); return true; });
+  var bell = document.getElementById("btn-notif"); if(bell) bell.style.display = state.perfil==="total" ? "" : "none";
+  var itens = state.perfil==="total"
+    ? NAV.filter(function(n){ if(n.id==="financeiro") return podeVerFinanceiro(); if(n.id==="relatorios") return podeVerRelatorios(); return true; })
+    : NAV.filter(function(n){ return state.perfil==="consorcio" && n.id==="consorcio"; });
   var porId = {}; itens.forEach(function(n){ porId[n.id]=n; });
   var usados = {};
   function item(n){ usados[n.id]=1; return '<div class="navitem'+(state.tab===n.id?' active':'')+'" data-tab="'+n.id+'">'+ICONS[n.icon]+'<span>'+n.label+'</span></div>'; }
@@ -590,13 +618,24 @@ function renderNav(){
 }
 
 function render(){
+  var main = document.getElementById("main");
+  if(state.perfil!=="total"){
+    /* Perfil restrito ou ainda não identificado: nunca desenha telas da carteira. */
+    renderNav();
+    if(state.loading || state.perfil===null){ main.innerHTML = '<div class="empty">Carregando…</div>'; return; }
+    if(state.perfil==="consorcio"){ state.tab = "consorcio"; main.innerHTML = viewConsorcio(); wireConsorcio(); return; }
+    main.innerHTML = state.perfil==="erro"
+      ? '<div class="card" style="max-width:560px;margin:40px auto;"><div class="card-body"><h2 style="margin-top:0;">Não foi possível verificar o seu acesso</h2><p>Recarregue a página. Se continuar, fale com o Henrique.</p></div></div>'
+      : viewSemAcesso();
+    return;
+  }
   renderNav();
   renderNotifBell();
-  var main = document.getElementById("main");
   if(state.loading){ main.innerHTML = '<div class="empty">Carregando…</div>'; return; }
   if(state.tab==="painel") main.innerHTML = viewPainel();
   else if(state.tab==="clientes") main.innerHTML = viewClientes();
   else if(state.tab==="funil") main.innerHTML = viewFunil();
+  else if(state.tab==="consorcio") main.innerHTML = viewConsorcio();
   else if(state.tab==="empresas") main.innerHTML = viewEmpresas();
   else if(state.tab==="retornos") main.innerHTML = viewRetornos();
   else if(state.tab==="relatorios") main.innerHTML = podeVerRelatorios()? viewRelatorios() : '<div class="empty">Você não tem acesso a este setor.</div>';
@@ -609,6 +648,7 @@ function render(){
   else if(state.tab==="financeiro") main.innerHTML = podeVerFinanceiro()? viewFinanceiro() : '<div class="empty">Você não tem acesso a este setor.</div>';
   else if(state.tab==="parametros") main.innerHTML = viewParametros();
   wireActions();
+  wireConsorcio();
 }
 function tile(label,value,sub){ return '<div class="tile"><div class="label">'+label+'</div><div class="value">'+value+'</div><div class="sub">'+(sub||"")+'</div></div>'; }
 function tabbtn(group,id,label,current){ return '<div class="tab2'+(current===id?' active':'')+'" data-'+group+'-tab="'+id+'">'+label+'</div>'; }
@@ -4478,6 +4518,331 @@ function wireRetornos(){
   Array.prototype.forEach.call(document.querySelectorAll("[data-retorno-nova]"), function(b){ b.onclick = function(){ var l = leadDe(b, "data-retorno-nova"); if(l) novaOportunidadeDoRetorno(l); }; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-retorno-descartar]"), function(b){ b.onclick = function(){ var l = leadDe(b, "data-retorno-descartar"); if(l) descartarRetorno(l); }; });
 }
+
+/* ================= FUNIL CONSÓRCIO =================
+   Funil próprio do consórcio (tabelas consorcio_leads / consorcio_tarefas / consorcio_notas).
+   Perfil 'consorcio' (ex.: Gabriela) só enxerga esta tela; a carteira fica bloqueada no banco
+   (políticas restritivas, ver migracao-consorcio-acesso-2026-11.sql). Perfil 'total' vê tudo. */
+var CONS_ETAPAS = ["Qualificação","Primeiro Contato","Proposta Enviada","Negociação","Ganho","Perdido"];
+var CONS_VENDEDORES = ["Gabriela","Henrique"];
+var CONS_TIPOS_BEM = ["Imóvel","Veículo","Pesados","Serviços","Outro"];
+var CONS_ADMINISTRADORAS = ["Porto Seguro","Outra"];
+var CONS_MOTIVOS_PERDA = ["Parcela alta / preço","Sem retorno do cliente","Fechou com outro","Sem crédito / restrição","Desistiu","Outro"];
+var consFiltro = {busca:"", vendedor:"", temperatura:""};
+var consPerdidosAberto = false;
+
+function ehPerfilConsorcio(){ return state.perfil === "consorcio"; }
+function consLeadPorId(id){ return state.consorcio_leads.filter(function(l){ return l.id===id; })[0]; }
+function consTarefasDoLead(id){ return state.consorcio_tarefas.filter(function(t){ return t.lead_id===id; }).sort(function(a,b){ return (a.vencimento_em||"")<(b.vencimento_em||"")?-1:1; }); }
+function consTarefasAbertas(id){ return consTarefasDoLead(id).filter(function(t){ return t.status!=="Concluída"; }); }
+function consNotasDoLead(id){ return state.consorcio_notas.filter(function(n){ return n.lead_id===id; }).sort(function(a,b){ return (a.criado_em||"")<(b.criado_em||"")?1:-1; }); }
+function consNomeLead(l){ return (l && (l.nome||l.empresa)) || "lead"; }
+function consVendedorPadrao(){ var n = currentUserName(); return CONS_VENDEDORES.indexOf(n)>=0 ? n : "Gabriela"; }
+function consResumoBem(l){ return [l.tipo_bem, l.administradora].filter(Boolean).join(" · ") || "Consórcio"; }
+
+async function loadConsorcio(){
+  var r = await Promise.all([
+    sb.from("consorcio_leads").select("*").order("criado_em",{ascending:false}),
+    sb.from("consorcio_tarefas").select("*").order("vencimento_em"),
+    sb.from("consorcio_notas").select("*").order("criado_em",{ascending:false})
+  ]);
+  if(r.some(function(x){ return x.error; })) console.warn("consórcio:", r.map(function(x){ return x.error && x.error.message; }));
+  state.consorcio_leads = r[0].data || [];
+  state.consorcio_tarefas = r[1].data || [];
+  state.consorcio_notas = r[2].data || [];
+}
+
+function consFiltrados(){
+  return state.consorcio_leads.filter(function(l){
+    if(consFiltro.vendedor && l.vendedor!==consFiltro.vendedor) return false;
+    if(consFiltro.temperatura && (l.temperatura||"sem")!==consFiltro.temperatura) return false;
+    if(consFiltro.busca){
+      var alvo = [l.nome,l.empresa,l.telefone,l.email,l.tipo_bem].join(" ").toLowerCase();
+      if(alvo.indexOf(consFiltro.busca.toLowerCase())===-1) return false;
+    }
+    return true;
+  });
+}
+function consTempDot(l){
+  var t = tempInfo(l.temperatura);
+  var estilo = 'display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:middle;flex:0 0 auto;margin-right:7px;margin-top:3px;cursor:pointer;'+
+    (t ? 'background:'+t.cor+';' : 'border:1.5px dashed var(--muted);');
+  return '<span class="kanban-card-noopen" role="button" tabindex="0" data-cons-temp="'+l.id+'" title="'+(t? t.label : 'Sem temperatura')+' · clique para trocar" style="'+estilo+'"></span>';
+}
+function consTarefasCardHtml(l, agoraISO){
+  var abertas = consTarefasAbertas(l.id);
+  if(!abertas.length) return "";
+  garantirEstiloTarefaCard();
+  return '<div class="k-tarefas">'+abertas.map(function(t){
+    var overdue = t.vencimento_em && t.vencimento_em < agoraISO, v = canalTarefaVisual(t.canal);
+    return '<div class="k-tarefa'+(overdue?' atrasada':'')+'" style="--k-cor:'+v.cor+';">'+
+      '<span class="k-tarefa-ic"><svg viewBox="0 0 24 24" aria-hidden="true">'+v.svg+'</svg></span>'+
+      '<div class="k-tarefa-txt"><div class="k-tarefa-tit">'+escapeHtml(t.titulo||t.canal||"Tarefa")+'</div>'+
+      '<div class="k-tarefa-meta"><span>'+escapeHtml(t.canal||"Tarefa")+' · '+quandoTarefaCurto(t.vencimento_em)+'</span>'+(overdue? '<span class="k-atraso">· atrasada</span>' : '')+'</div></div>'+
+      '<div class="k-tarefa-btns kanban-card-noopen"><button type="button" class="k-tarefa-ok k-tarefa-ed" data-cons-editar-tarefa="'+t.id+'" title="Editar ou excluir tarefa" aria-label="Editar ou excluir tarefa"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg></button>'+
+      '<button type="button" class="k-tarefa-ok" data-cons-concluir="'+t.id+'" title="Concluir tarefa" aria-label="Concluir tarefa">✓</button></div>'+
+    '</div>';
+  }).join("")+'</div>';
+}
+function consCardHtml(l, agoraISO){
+  return '<div class="kanban-card" draggable="true" data-cons-drag="'+l.id+'" data-cons-open="'+l.id+'">'+
+    '<div class="k-title" style="display:flex;align-items:flex-start;">'+consTempDot(l)+'<span>'+escapeHtml(l.nome||"—")+(l.empresa?' <span class="muted">('+escapeHtml(l.empresa)+')</span>':'')+'</span></div>'+
+    '<div class="muted">'+escapeHtml(consResumoBem(l))+' · '+escapeHtml(l.vendedor||"—")+'</div>'+
+    '<div style="margin-top:4px;font-weight:600;">'+(l.valor_credito? 'Crédito '+fmtMoney(l.valor_credito) : 'Crédito a definir')+'</div>'+
+    (l.parcela_estimada? '<div class="muted op-card-idades">Parcela ~'+fmtMoney(l.parcela_estimada)+(l.prazo_meses? ' · '+l.prazo_meses+' meses' : '')+'</div>' : '')+
+    consTarefasCardHtml(l, agoraISO)+
+    '<select class="kanban-card-noopen" data-cons-etapa="'+l.id+'" style="margin-top:8px;">'+CONS_ETAPAS.map(function(e){ return '<option'+(l.etapa===e?' selected':'')+'>'+e+'</option>'; }).join("")+'</select>'+
+    '<div class="rowflex k-actions kanban-card-noopen" style="margin-top:6px;">'+
+      '<button class="linklike" data-cons-editar="'+l.id+'">editar</button>'+
+      '<button class="linklike" data-cons-nova-tarefa="'+l.id+'">+ tarefa</button>'+
+      '<button class="linklike" data-cons-excluir="'+l.id+'" style="color:var(--danger);">excluir</button>'+
+    '</div></div>';
+}
+function viewConsorcio(){
+  var base = consFiltrados(), agoraISO = new Date().toISOString(), mk = todayMonthKey();
+  var abertos = base.filter(function(l){ return l.etapa!=="Ganho" && l.etapa!=="Perdido"; });
+  var ganhosMes = base.filter(function(l){ return l.etapa==="Ganho" && monthKeyFromISO(l.data_ganho)===mk; });
+  var perdidos = base.filter(function(l){ return l.etapa==="Perdido"; });
+  var soma = function(L){ return L.reduce(function(s,l){ return s+(l.valor_credito||0); },0); };
+  var idsVisiveis = {}; base.forEach(function(l){ idsVisiveis[l.id]=1; });
+  var atrasadas = state.consorcio_tarefas.filter(function(t){ return idsVisiveis[t.lead_id] && t.status!=="Concluída" && t.vencimento_em && t.vencimento_em<agoraISO; });
+  var header = '<div class="topbar"><div><h1>Funil Consórcio</h1><div class="desc">'+abertos.length+' oportunidade(s) em aberto · arraste o cartão entre as etapas ou clique para ver os detalhes</div></div>'+
+    '<div class="rowflex"><button class="btn btn-primary" id="cons-novo">+ Nova oportunidade</button></div></div>';
+  var tiles = '<div class="tiles">'+
+    tile("Crédito em aberto", fmtMoney(soma(abertos)), abertos.length+" oportunidade(s)")+
+    tile("Vendido em "+monthLabel(mk), fmtMoney(soma(ganhosMes)), ganhosMes.length+" venda(s)")+
+    tile("Tarefas atrasadas", atrasadas.length, atrasadas.length? "veja os cartões em vermelho" : "tudo em dia")+
+  '</div>';
+  var filtros = '<div class="funil-filterbar">'+
+    '<div class="field grow"><label>Buscar</label><input id="cf-busca" placeholder="Nome, empresa, telefone" value="'+escapeHtml(consFiltro.busca)+'"></div>'+
+    '<div class="field"><label>Vendedor(a)</label><select id="cf-vendedor"><option value="">Todos</option>'+CONS_VENDEDORES.map(function(v){ return '<option'+(consFiltro.vendedor===v?' selected':'')+'>'+v+'</option>'; }).join("")+'</select></div>'+
+    '<div class="field"><label>Temperatura</label><select id="cf-temp"><option value="">Todas</option>'+TEMPERATURAS.map(function(t){ return '<option value="'+t.k+'"'+(consFiltro.temperatura===t.k?' selected':'')+'>'+t.label+'</option>'; }).join("")+'<option value="sem"'+(consFiltro.temperatura==="sem"?' selected':'')+'>Sem temperatura</option></select></div>'+
+  '</div>';
+  var colunas = CONS_ETAPAS.filter(function(e){ return e!=="Perdido"; }).map(function(etapa){
+    var itens = etapa==="Ganho" ? ganhosMes : base.filter(function(l){ return l.etapa===etapa; });
+    itens = itens.slice().sort(function(a,b){ return tempRank(a)-tempRank(b); });
+    return '<div class="kanban-col"><div class="kanban-col-head"><h3>'+(etapa==="Ganho"? 'Ganho · '+monthLabel(mk) : etapa)+'</h3><div class="meta">'+itens.length+' · '+fmtMoney(soma(itens))+'</div></div>'+
+      '<div class="kanban-col-body" data-cons-drop="'+etapa+'">'+
+      (itens.length? itens.map(function(l){ return consCardHtml(l, agoraISO); }).join("") : '<div class="empty" style="padding:16px 6px;">Nenhuma oportunidade.</div>')+
+      '</div></div>';
+  }).join("");
+  var zonaPerdido = '<div class="kanban-col" style="flex:0 0 200px;width:200px;border-style:dashed;"><div class="kanban-col-head"><h3 style="color:var(--danger);">Perdido</h3><div class="meta">'+perdidos.length+' no total</div></div>'+
+    '<div class="kanban-col-body" data-cons-drop="Perdido" style="display:flex;flex-direction:column;justify-content:center;"><div class="empty" style="padding:18px 8px;line-height:1.5;">Arraste o cartão aqui para marcar como perdido. Ele sai do funil e fica na lista de perdidos, abaixo.</div></div></div>';
+  var board = '<div class="kanban-board">'+colunas+zonaPerdido+'</div>';
+  var listaPerdidos = '<div class="card"><div class="card-head"><h2>Perdidos</h2><div class="meta">'+perdidos.length+' · '+fmtMoney(soma(perdidos))+' em crédito</div><button class="btn btn-ghost" type="button" id="cons-toggle-perdidos">'+(consPerdidosAberto? 'Ocultar' : 'Ver lista')+'</button></div>'+
+    (consPerdidosAberto? '<div class="card-body">'+(perdidos.length? '<div class="tablewrap"><table class="grid"><thead><tr><th>Negócio</th><th>Vendedor(a)</th><th class="num">Crédito</th><th>Motivo</th><th>Retomar em</th><th></th></tr></thead><tbody>'+
+      perdidos.map(function(l){ return '<tr class="rowlink" data-cons-open="'+l.id+'" style="cursor:pointer;"><td>'+escapeHtml(l.nome||"—")+(l.empresa?' <span class="muted">('+escapeHtml(l.empresa)+')</span>':'')+'</td><td>'+escapeHtml(l.vendedor||"—")+'</td><td class="num">'+fmtMoney(l.valor_credito)+'</td><td>'+escapeHtml(l.motivo_perda||"—")+'</td><td>'+(l.retomar_em? fmtDateISO(l.retomar_em) : '—')+'</td>'+
+        '<td class="kanban-card-noopen"><button class="linklike" data-cons-reabrir="'+l.id+'">voltar ao funil</button> · <button class="linklike" data-cons-excluir="'+l.id+'" style="color:var(--danger);">excluir</button></td></tr>'; }).join("")+
+      '</tbody></table></div>' : '<div class="empty">Nenhum perdido.</div>')+'</div>' : '')+'</div>';
+  return header + tiles + filtros + board + listaPerdidos;
+}
+
+function consLeadFormHtml(l){
+  l = l || {};
+  var opt = function(arr, v){ return arr.map(function(x){ return '<option'+(v===x?' selected':'')+'>'+x+'</option>'; }).join(""); };
+  return '<div class="field row2"><div class="field"><label>Nome do contato</label><input id="cl-nome" value="'+escapeHtml(l.nome||"")+'"></div><div class="field"><label>Empresa (opcional)</label><input id="cl-empresa" value="'+escapeHtml(l.empresa||"")+'"></div></div>'+
+    '<div class="field row2"><div class="field"><label>Telefone / WhatsApp</label><input id="cl-telefone" value="'+escapeHtml(l.telefone||"")+'"></div><div class="field"><label>E-mail</label><input id="cl-email" type="email" value="'+escapeHtml(l.email||"")+'"></div></div>'+
+    '<div class="field row2"><div class="field"><label>CPF / CNPJ (opcional)</label><input id="cl-doc" value="'+escapeHtml(l.cpf_cnpj||"")+'"></div><div class="field"><label>Origem</label><input id="cl-origem" placeholder="ex: indicação, tráfego pago, carteira" value="'+escapeHtml(l.origem||"")+'"></div></div>'+
+    '<div class="field row2"><div class="field"><label>Tipo de bem</label><select id="cl-bem"><option value="">—</option>'+opt(CONS_TIPOS_BEM, l.tipo_bem)+'</select></div><div class="field"><label>Administradora</label><select id="cl-adm">'+opt(CONS_ADMINISTRADORAS, l.administradora||"Porto Seguro")+'</select></div></div>'+
+    '<div class="field row2">'+moneyFieldHtml("cl-credito", l.valor_credito, "Crédito pretendido (R$)")+moneyFieldHtml("cl-parcela", l.parcela_estimada, "Parcela estimada (R$)")+'</div>'+
+    '<div class="field row2"><div class="field"><label>Prazo (meses)</label><input id="cl-prazo" type="number" min="1" step="1" value="'+(l.prazo_meses||"")+'"></div><div class="field"><label>Vendedor(a)</label><select id="cl-vendedor">'+opt(CONS_VENDEDORES, l.vendedor||consVendedorPadrao())+'</select></div></div>'+
+    '<div class="field row2"><div class="field"><label>Etapa</label><select id="cl-etapa">'+opt(CONS_ETAPAS.filter(function(e){ return e!=="Perdido" || l.etapa==="Perdido"; }), l.etapa||"Qualificação")+'</select></div><div class="field"><label>Temperatura</label><select id="cl-temp"><option value="">Sem temperatura</option>'+TEMPERATURAS.map(function(t){ return '<option value="'+t.k+'"'+(l.temperatura===t.k?' selected':'')+'>'+t.label+'</option>'; }).join("")+'</select></div></div>'+
+    '<div class="field"><label>Observações</label><textarea id="cl-obs">'+escapeHtml(l.observacoes||"")+'</textarea></div>';
+}
+function openConsLeadModal(existing, depois){
+  openModal(existing? "Editar oportunidade — "+escapeHtml(consNomeLead(existing)) : "Nova oportunidade — Consórcio", consLeadFormHtml(existing), async function(fechar){
+    var v = function(id){ var el = document.getElementById(id); return el ? el.value.trim() : ""; };
+    var etapa = v("cl-etapa") || "Qualificação";
+    var data = {
+      nome: v("cl-nome") || null, empresa: v("cl-empresa") || null, telefone: v("cl-telefone") || null, email: v("cl-email") || null,
+      cpf_cnpj: v("cl-doc") || null, origem: v("cl-origem") || null, tipo_bem: v("cl-bem") || null, administradora: v("cl-adm") || null,
+      valor_credito: parseMoneyBR(v("cl-credito")) || null, parcela_estimada: parseMoneyBR(v("cl-parcela")) || null,
+      prazo_meses: parseInt(v("cl-prazo"),10) || null, vendedor: v("cl-vendedor") || null, etapa: etapa,
+      temperatura: v("cl-temp") || null, observacoes: v("cl-obs") || null
+    };
+    if(!data.nome && !data.empresa){ toast("Informe o nome ou a empresa."); return; }
+    if(!existing || existing.etapa!==etapa){ data.etapa_atualizada_em = new Date().toISOString(); }
+    if(etapa==="Ganho" && !(existing && existing.data_ganho)) data.data_ganho = todayISO();
+    if(etapa!=="Ganho" && etapa!=="Perdido" && existing && existing.etapa==="Ganho") data.data_ganho = null;
+    fechar();
+    var id = existing ? existing.id : null;
+    if(existing){ await dbUpdate("consorcio_leads", existing.id, data); }
+    else { var novo = await dbInsert("consorcio_leads", data); id = novo && novo.id; }
+    if(depois) depois(id);
+  }, existing? "Salvar" : "Criar oportunidade");
+}
+async function consMudarEtapa(id, etapa){
+  var l = consLeadPorId(id); if(!l || l.etapa===etapa) { render(); return; }
+  if(etapa==="Perdido"){ openConsPerdidoModal(l); return; }
+  var patch = {etapa: etapa, etapa_atualizada_em: new Date().toISOString()};
+  if(etapa==="Ganho" && !l.data_ganho) patch.data_ganho = todayISO();
+  if(etapa!=="Ganho") patch.data_ganho = null;
+  if(l.etapa==="Perdido"){ patch.motivo_perda = null; patch.retomar_em = null; }
+  await dbUpdate("consorcio_leads", id, patch);
+  if(etapa==="Ganho") toast("Venda registrada em "+monthLabel(todayMonthKey())+". 🎉");
+}
+function openConsPerdidoModal(l){
+  var body = '<div class="field"><label>Motivo da perda</label><select id="cp-motivo">'+CONS_MOTIVOS_PERDA.map(function(m){ return '<option>'+m+'</option>'; }).join("")+'</select></div>'+
+    '<div class="field" id="cp-outro-wrap" style="display:none;"><label>Qual motivo?</label><input id="cp-outro"></div>'+
+    retornoCamposHtml("cpr", l.retomar_em || addMonthsISO(todayISO(), 3), "", false, "Ligar")+'<div class="muted" style="font-size:11.5px;">Com data, vira uma tarefa no dia para retomar o contato. Deixe em branco se não for retomar.</div>';
+  openModal("Perdido — "+escapeHtml(consNomeLead(l)), body, async function(fechar){
+    var sel = document.getElementById("cp-motivo").value, outro = document.getElementById("cp-outro");
+    var motivo = sel==="Outro" ? ((outro && outro.value.trim()) || "Outro") : sel;
+    var r = lerRetornoCampos("cpr");
+    fechar();
+    var ok = await dbUpdate("consorcio_leads", l.id, {etapa:"Perdido", etapa_atualizada_em: new Date().toISOString(), motivo_perda: motivo, retomar_em: r.data || null, data_ganho: null});
+    if(ok && r.data){
+      await dbInsert("consorcio_tarefas", {lead_id: l.id, titulo: "Retomar contato — "+consNomeLead(l), canal: r.canal==="Campanha" ? "Outro" : r.canal,
+        vencimento_em: new Date(r.data+"T09:00:00").toISOString(), status: "Pendente", responsavel: l.vendedor || consVendedorPadrao(),
+        descricao: (r.canal==="Campanha" ? "[Campanha] " : "")+(r.obs || ("Perdido por: "+motivo))});
+      toast("Marcado como perdido · retomar em "+fmtDateISO(r.data)+".");
+    }
+  }, "Marcar como perdido");
+  wireRetornoCampos("cpr");
+  var sel = document.getElementById("cp-motivo"), wrap = document.getElementById("cp-outro-wrap");
+  sel.addEventListener("change", function(){ wrap.style.display = sel.value==="Outro" ? "" : "none"; });
+  var cancelar = function(){ render(); };
+  ["modal-close","modal-cancel"].forEach(function(id){ var b = document.getElementById(id); if(b) b.addEventListener("click", cancelar); });
+}
+function openConsExcluirModal(l){
+  var n = consTarefasDoLead(l.id).length, m = consNotasDoLead(l.id).length;
+  openModal("Excluir oportunidade", '<p>Excluir <b>'+escapeHtml(consNomeLead(l))+'</b> do Funil Consórcio?</p><p class="muted">Apaga também '+n+' tarefa(s) e '+m+' nota(s). Não dá para desfazer. Se o cliente pode voltar no futuro, prefira marcar como "Perdido".</p>', async function(fechar){
+    fechar();
+    closeLeadDetailPanel();
+    await dbDelete("consorcio_leads", l.id, ["consorcio_tarefas","consorcio_notas"]);
+  }, "Excluir de vez");
+  var b = document.getElementById("modal-save"); if(b){ b.style.background = "var(--danger)"; b.style.borderColor = "var(--danger)"; }
+}
+function openConsTarefaModal(l, tarefa, depois){
+  var ed = !!(tarefa && tarefa.id);
+  openModal((ed? "Editar tarefa — " : "Agendar tarefa — ")+escapeHtml(consNomeLead(l)), leadTarefaFormHtml(tarefa), async function(fechar){
+    var titulo = document.getElementById("lt-titulo").value.trim(), venc = readDateTime("lt-venc");
+    if(!titulo){ toast("Descreva a tarefa."); return; }
+    if(!venc){ toast("Escolha a data."); return; }
+    var data = {titulo: titulo, canal: document.getElementById("lt-canal").value, vencimento_em: venc.iso, descricao: document.getElementById("lt-desc").value.trim() || null};
+    fechar();
+    if(ed) await dbUpdate("consorcio_tarefas", tarefa.id, data);
+    else { data.lead_id = l.id; data.status = "Pendente"; data.responsavel = l.vendedor || consVendedorPadrao(); await dbInsert("consorcio_tarefas", data); }
+    if(depois) depois();
+  }, ed? "Salvar alteração" : "Salvar");
+  if(!ed) return;
+  var ex = document.getElementById("lt-excluir");
+  if(ex) ex.onclick = async function(){
+    if(!ex.getAttribute("data-confirmar")){ ex.setAttribute("data-confirmar","1"); ex.textContent = "clique de novo para excluir"; ex.style.fontWeight = "700"; return; }
+    document.getElementById("modal-root").innerHTML = "";
+    await dbDelete("consorcio_tarefas", tarefa.id);
+    if(depois) depois();
+  };
+  var re = document.getElementById("lt-reabrir");
+  if(re) re.onclick = async function(){
+    document.getElementById("modal-root").innerHTML = "";
+    await dbUpdate("consorcio_tarefas", tarefa.id, {status:"Pendente", concluido_em:null});
+    if(depois) depois();
+  };
+}
+async function consConcluirTarefa(id, depois){
+  await dbUpdate("consorcio_tarefas", id, {status:"Concluída", concluido_em: new Date().toISOString()});
+  if(depois) depois();
+}
+async function consTrocarTemperatura(id, temp){
+  var l = consLeadPorId(id); if(!l) return;
+  var nova = temp!==undefined ? temp : TEMP_CICLO[l.temperatura||""];
+  var r = await sb.from("consorcio_leads").update({temperatura: nova || null}).eq("id", id);
+  if(r.error){ toast("Erro ao salvar: "+r.error.message); return; }
+  state.consorcio_leads = state.consorcio_leads.map(function(x){ return x.id===id ? Object.assign({}, x, {temperatura: nova||null}) : x; });
+  render();
+}
+function openConsPanel(id){
+  var l = consLeadPorId(id), root = document.getElementById("panel-root");
+  if(!root) return;
+  if(!l){ root.innerHTML = ""; return; }
+  var etapas = CONS_ETAPAS.filter(function(e){ return e!=="Perdido"; }), cur = etapas.indexOf(l.etapa);
+  var stepper = etapas.map(function(e,i){ return '<div class="stage-step '+(l.etapa===e?'current':(cur>=0 && i<cur?'done':''))+'" data-consp-etapa="'+e+'">'+e+'</div>'; }).join("")+
+    '<div class="stage-step'+(l.etapa==="Perdido"?' current':'')+'" data-consp-etapa="Perdido" style="flex:0 0 84px;'+(l.etapa==="Perdido"?'':'background:var(--danger-bg);color:var(--danger);border-color:transparent;')+'">Perdido</div>';
+  var wa = linkWhatsApp(l.telefone), agoraISO = new Date().toISOString();
+  var tarefas = consTarefasDoLead(l.id), notas = consNotasDoLead(l.id);
+  var kv = function(k, v){ return v ? '<div class="kv-row"><span class="k">'+k+'</span><span>'+v+'</span></div>' : ''; };
+  var body = '<div class="side-panel-head">'+
+      '<div class="rowflex"><div><h2>'+escapeHtml(consNomeLead(l))+'</h2><div class="muted">Consórcio · '+escapeHtml(consResumoBem(l))+' · '+escapeHtml(l.vendedor||"—")+'</div></div><button class="panel-close" id="panel-close">&times;</button></div>'+
+      '<div class="rowflex" style="gap:8px;margin-top:10px;align-items:center;"><span class="muted" style="font-size:12px;">Temperatura:</span>'+TEMPERATURAS.slice().reverse().map(function(t){ var on = l.temperatura===t.k; return '<button type="button" class="btn btn-sm '+(on?'':'btn-ghost')+'" data-consp-temp="'+t.k+'" style="'+(on? 'background:'+t.cor+';border-color:'+t.cor+';color:#fff;' : '')+'">'+t.label+'</button>'; }).join("")+'</div>'+
+      '<div class="stage-stepper" style="margin-top:12px;">'+stepper+'</div>'+
+    '</div><div class="side-panel-body">'+
+      '<div class="side-panel-section"><h4>Dados</h4><div class="kv-list">'+
+        kv("Contato", escapeHtml(l.nome||"—"))+kv("Empresa", escapeHtml(l.empresa||""))+
+        kv("Telefone", l.telefone? escapeHtml(l.telefone)+(wa? ' · <a href="'+wa+'" target="_blank" rel="noopener">WhatsApp</a>' : '') : '')+
+        kv("E-mail", escapeHtml(l.email||""))+kv("CPF / CNPJ", escapeHtml(l.cpf_cnpj||""))+kv("Origem", escapeHtml(l.origem||""))+
+        kv("Crédito pretendido", l.valor_credito? fmtMoney(l.valor_credito) : '')+kv("Parcela estimada", l.parcela_estimada? fmtMoney(l.parcela_estimada) : '')+kv("Prazo", l.prazo_meses? l.prazo_meses+' meses' : '')+
+        kv("Etapa", escapeHtml(l.etapa)+(l.data_ganho? ' · ganho em '+fmtDateISO(l.data_ganho) : ''))+
+        (l.etapa==="Perdido"? kv("Motivo da perda", escapeHtml(l.motivo_perda||"—"))+kv("Retomar em", l.retomar_em? fmtDateISO(l.retomar_em) : '') : '')+
+        kv("Criado em", fmtDateTime(l.criado_em))+'</div>'+
+        (l.observacoes? '<div class="muted" style="white-space:pre-wrap;margin-top:6px;">'+escapeHtml(l.observacoes)+'</div>' : '')+
+        '<div class="rowflex" style="margin-top:10px;gap:10px;"><button class="btn btn-ghost btn-sm" id="consp-editar">Editar dados</button>'+(l.etapa==="Perdido"? '<button class="btn btn-ghost btn-sm" id="consp-reabrir">Voltar ao funil</button>' : '')+'<button class="btn btn-ghost btn-sm" id="consp-excluir" style="color:var(--danger);">Excluir oportunidade</button></div>'+
+      '</div>'+
+      '<div class="side-panel-section"><div class="rowflex" style="justify-content:space-between;"><h4>Tarefas</h4><button class="btn btn-ghost btn-sm" id="consp-tarefa">+ Agendar tarefa</button></div>'+
+        (tarefas.length? tarefas.map(function(t){ var atr = t.status!=="Concluída" && t.vencimento_em && t.vencimento_em<agoraISO;
+          return '<div class="activity-item"><div style="font-weight:600;'+(t.status==="Concluída"?'text-decoration:line-through;opacity:.6;':'')+'">'+escapeHtml(t.titulo)+'</div><div class="meta">'+escapeHtml(t.canal||"—")+' · '+fmtDateTime(t.vencimento_em)+(atr? ' · <span style="color:var(--danger);font-weight:700;">atrasada</span>' : '')+
+            (t.status!=="Concluída"? ' · <button class="linklike" data-consp-concluir="'+t.id+'">concluir</button>' : ' · concluída')+' · <button class="linklike" data-consp-editar-tarefa="'+t.id+'">editar / excluir</button></div>'+(t.descricao? '<div class="muted" style="font-size:12px;">'+escapeHtml(t.descricao)+'</div>' : '')+'</div>'; }).join("")
+          : '<div class="empty">Nenhuma tarefa. Agende o próximo contato.</div>')+
+      '</div>'+
+      '<div class="side-panel-section"><h4>Notas</h4>'+
+        '<textarea id="consp-nota" placeholder="O que foi conversado, próximos passos…" style="width:100%;min-height:70px;"></textarea>'+
+        '<div class="rowflex" style="justify-content:flex-end;margin-top:6px;"><button class="btn btn-primary btn-sm" id="consp-add-nota">Adicionar nota</button></div>'+
+        (notas.length? notas.map(function(n){ return '<div class="activity-item"><div style="white-space:pre-wrap;">'+escapeHtml(n.texto)+'</div><div class="meta">'+escapeHtml(n.autor||"")+' · '+fmtDateTime(n.criado_em)+'</div></div>'; }).join("") : '<div class="empty">Nenhuma nota ainda.</div>')+
+      '</div>'+
+    '</div>';
+  root.innerHTML = '<div class="panel-backdrop" id="panel-backdrop"><div class="side-panel">'+body+'</div></div>';
+  var reabrirPainel = function(){ openConsPanel(id); };
+  document.getElementById("panel-close").onclick = closeLeadDetailPanel;
+  document.getElementById("panel-backdrop").addEventListener("click", function(e){ if(e.target.id==="panel-backdrop") closeLeadDetailPanel(); });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-consp-etapa]"), function(b){ b.onclick = function(){ var e = b.getAttribute("data-consp-etapa"); if(e==="Perdido"){ closeLeadDetailPanel(); } consMudarEtapa(id, e).then(function(){ if(e!=="Perdido") reabrirPainel(); }); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-consp-temp]"), function(b){ b.onclick = function(){ var t = b.getAttribute("data-consp-temp"); consTrocarTemperatura(id, l.temperatura===t ? null : t).then(reabrirPainel); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-consp-concluir]"), function(b){ b.onclick = function(){ consConcluirTarefa(b.getAttribute("data-consp-concluir"), reabrirPainel); }; });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-consp-editar-tarefa]"), function(b){ b.onclick = function(){ var t = state.consorcio_tarefas.filter(function(x){ return x.id===b.getAttribute("data-consp-editar-tarefa"); })[0]; if(t) openConsTarefaModal(l, t, reabrirPainel); }; });
+  document.getElementById("consp-tarefa").onclick = function(){ openConsTarefaModal(l, null, reabrirPainel); };
+  document.getElementById("consp-editar").onclick = function(){ openConsLeadModal(l, reabrirPainel); };
+  document.getElementById("consp-excluir").onclick = function(){ openConsExcluirModal(l); };
+  var rb = document.getElementById("consp-reabrir"); if(rb) rb.onclick = function(){ consMudarEtapa(id, "Qualificação").then(reabrirPainel); };
+  document.getElementById("consp-add-nota").onclick = async function(){
+    var t = document.getElementById("consp-nota").value.trim();
+    if(!t){ toast("Escreva a nota."); return; }
+    await dbInsert("consorcio_notas", {lead_id: id, texto: t, autor: currentUserName() || currentUser()});
+    reabrirPainel();
+  };
+}
+function wireConsorcio(){
+  if(state.tab!=="consorcio") return;
+  var main = document.getElementById("main");
+  var novo = document.getElementById("cons-novo"); if(novo) novo.onclick = function(){ openConsLeadModal(null); };
+  var busca = document.getElementById("cf-busca");
+  if(busca) busca.oninput = function(){ consFiltro.busca = busca.value; render(); var el = document.getElementById("cf-busca"); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); } };
+  var vend = document.getElementById("cf-vendedor"); if(vend) vend.onchange = function(){ consFiltro.vendedor = vend.value; render(); };
+  var temp = document.getElementById("cf-temp"); if(temp) temp.onchange = function(){ consFiltro.temperatura = temp.value; render(); };
+  var tp = document.getElementById("cons-toggle-perdidos"); if(tp) tp.onclick = function(){ consPerdidosAberto = !consPerdidosAberto; render(); };
+  function cada(sel, fn){ Array.prototype.forEach.call(main.querySelectorAll(sel), fn); }
+  cada("[data-cons-open]", function(el){ el.addEventListener("click", function(e){ if(e.target.closest("select,button,a,.kanban-card-noopen")) return; openConsPanel(el.getAttribute("data-cons-open")); }); });
+  cada("[data-cons-etapa]", function(s){ s.onchange = function(){ consMudarEtapa(s.getAttribute("data-cons-etapa"), s.value); }; });
+  cada("[data-cons-editar]", function(b){ b.onclick = function(){ var l = consLeadPorId(b.getAttribute("data-cons-editar")); if(l) openConsLeadModal(l); }; });
+  cada("[data-cons-nova-tarefa]", function(b){ b.onclick = function(){ var l = consLeadPorId(b.getAttribute("data-cons-nova-tarefa")); if(l) openConsTarefaModal(l, null); }; });
+  cada("[data-cons-excluir]", function(b){ b.onclick = function(){ var l = consLeadPorId(b.getAttribute("data-cons-excluir")); if(l) openConsExcluirModal(l); }; });
+  cada("[data-cons-reabrir]", function(b){ b.onclick = function(){ consMudarEtapa(b.getAttribute("data-cons-reabrir"), "Qualificação"); }; });
+  cada("[data-cons-concluir]", function(b){ b.onclick = function(){ consConcluirTarefa(b.getAttribute("data-cons-concluir")); }; });
+  cada("[data-cons-editar-tarefa]", function(b){ b.onclick = function(){ var t = state.consorcio_tarefas.filter(function(x){ return x.id===b.getAttribute("data-cons-editar-tarefa"); })[0]; var l = t && consLeadPorId(t.lead_id); if(l) openConsTarefaModal(l, t); }; });
+  cada("[data-cons-temp]", function(d){ d.onclick = function(e){ e.stopPropagation(); consTrocarTemperatura(d.getAttribute("data-cons-temp")); }; });
+  cada("[data-cons-drag]", function(card){
+    card.addEventListener("dragstart", function(e){ e.dataTransfer.setData("text/plain", card.getAttribute("data-cons-drag")); card.classList.add("dragging"); });
+    card.addEventListener("dragend", function(){ card.classList.remove("dragging"); });
+  });
+  cada("[data-cons-drop]", function(col){
+    col.addEventListener("dragover", function(e){ e.preventDefault(); col.classList.add("drag-over"); });
+    col.addEventListener("dragleave", function(){ col.classList.remove("drag-over"); });
+    col.addEventListener("drop", function(e){ e.preventDefault(); col.classList.remove("drag-over"); var id = e.dataTransfer.getData("text/plain"); if(id && consLeadPorId(id)) consMudarEtapa(id, col.getAttribute("data-cons-drop")); });
+  });
+}
+function viewSemAcesso(){
+  return '<div class="card" style="max-width:560px;margin:40px auto;"><div class="card-body"><h2 style="margin-top:0;">Acesso ainda não liberado</h2>'+
+    '<p>O seu usuário (<b>'+escapeHtml(currentUser())+'</b>) ainda não tem acesso ao sistema. Fale com o Henrique para liberar.</p></div></div>';
+}
+
 
 /* ================= FUNIL: temperatura do negócio + excluir negócio =================
    Temperatura (leads.temperatura): bolinha no cartão — 🔵 frio, 🟡 morno, 🟢 quente.
