@@ -47,7 +47,7 @@ var CONTENT_TEMPLATES = {
 var state = {
   session: null,
   tab: "painel",
-    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [], lead_anexos: [], lead_eventos: [], consorcio_leads: [], consorcio_tarefas: [], consorcio_notas: [], perfil: null, acessoNome: null,
+    clientes: [], dependentes: [], tarefas: [], reembolsos: [], agendamentos: [], leads: [], interacoes: [], metas_mensais: [], implantacoes: [], equipe: [], tabelas_precos_cliente: [], historico_reajustes: [], boletos_clientes: [], carencia_modelos: [], lead_notas: [], comissoes_recebidas: [], lead_anexos: [], lead_eventos: [], operadoras_central: [], consorcio_leads: [], consorcio_tarefas: [], consorcio_notas: [], perfil: null, acessoNome: null,
   params: {taxa_imposto:0.085, percentual_vitalicio:0.02, parcelas_cheias:3, meta_mensal_padrao:0, meta_vendas_mensal:0},
   loading: true
 };
@@ -426,6 +426,8 @@ async function loadAll(){
     state.lead_anexos = anx.error ? [] : (anx.data || []);
     var evs = await sb.from("lead_eventos").select("*").order("criado_em");
     state.lead_eventos = evs.error ? [] : (evs.data || []);
+    var opc = await sb.from("operadoras_central").select("*").order("operadora");
+    state.operadoras_central = opc.error ? [] : (opc.data || []);
     await loadConsorcio();
   }catch(e){ console.error(e); toast("Erro ao carregar dados."); }
   state.loading = false;
@@ -451,6 +453,7 @@ async function reload(table){
         comissoes_recebidas: function(){ return sb.from("comissoes_recebidas").select("*").order("data_recebimento",{ascending:false}); },
         lead_anexos: function(){ return sb.from("lead_anexos").select("*").order("criado_em",{ascending:false}); },
         lead_eventos: function(){ return sb.from("lead_eventos").select("*").order("criado_em"); },
+        operadoras_central: function(){ return sb.from("operadoras_central").select("*").order("operadora"); },
         consorcio_leads: function(){ return sb.from("consorcio_leads").select("*").order("criado_em",{ascending:false}); },
         consorcio_tarefas: function(){ return sb.from("consorcio_tarefas").select("*").order("vencimento_em"); },
         consorcio_notas: function(){ return sb.from("consorcio_notas").select("*").order("criado_em",{ascending:false}); }
@@ -553,6 +556,7 @@ var NAV = [
   {id:"retornos", label:"Contatos futuros", icon:"clock"},
   {id:"relatorios", label:"Relatórios", icon:"chart"},
   {id:"empresas", label:"Empresas", icon:"building"},
+  {id:"operadoras", label:"Operadoras", icon:"shield"},
   {id:"implantacao", label:"Implantação", icon:"flag"},
   {id:"tarefas", label:"Tarefas", icon:"check"},
   {id:"agenda", label:"Agenda", icon:"calendar"},
@@ -570,6 +574,7 @@ var ICONS = {
   message:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H8l-4 4z"/></svg>',
   sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h9M17 6h3M4 12h3M9 12h11M4 18h13M20 18h0"/><circle cx="14" cy="6" r="2"/><circle cx="6" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>',
   flag:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4"/><path d="M5 4h13l-3 4.5L18 13H5"/></svg>',
+  shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2 2 4-4" stroke-linecap="round"/></svg>',
   building:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16"/><path d="M15 9h4a1 1 0 0 1 1 1v11"/><path d="M3 21h18M8 8h3M8 12h3M8 16h3"/></svg>',
   chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
@@ -590,7 +595,7 @@ function navGrupoAberto(nome){ try { return localStorage.getItem("op-menu-"+nome
 var NAV_SECOES = [
   {id:"inicio", label:"Início", icon:"grid", itens:["painel"]},
   {id:"clientes", label:"Clientes", icon:"users", itens:["clientes"]},
-  {id:"comercial", label:"Comercial", icon:"filter", itens:["funil","consorcio","retornos","relatorios","empresas"]},
+  {id:"comercial", label:"Comercial", icon:"filter", itens:["funil","consorcio","retornos","relatorios","empresas","operadoras"]},
   {id:"implantacao", label:"Implantação", icon:"flag", itens:["implantacao"]},
   {id:"concierge", label:"Concierge", icon:"heart", itens:["tarefas","agenda","posvenda"]},
   {id:"gestao", label:"Gestão", icon:"sliders", itens:["financeiro","parametros"]}
@@ -650,6 +655,7 @@ function render(){
   else if(state.tab==="funil") main.innerHTML = viewFunil();
   else if(state.tab==="consorcio") main.innerHTML = viewConsorcio();
   else if(state.tab==="empresas") main.innerHTML = viewEmpresas();
+  else if(state.tab==="operadoras") main.innerHTML = viewOperadoras();
   else if(state.tab==="retornos") main.innerHTML = viewRetornos();
   else if(state.tab==="relatorios") main.innerHTML = podeVerRelatorios()? viewRelatorios() : '<div class="empty">Você não tem acesso a este setor.</div>';
   else if(state.tab==="implantacao") main.innerHTML = viewImplantacao();
@@ -775,7 +781,7 @@ function viewClientes(){
       oportunidadesDoClienteHtml(c)+
       '<div class="client-card-foot">'+
         (c.status!=="Cancelado"? '<button type="button" class="btn-oportunidade" data-oport-cliente="'+c.id+'" title="Criar uma nova oportunidade no Funil Comercial com os dados deste cliente. O contrato atual continua na carteira.">+ Criar oportunidade</button>' : '')+
-        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">tabela & upgrade</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(podeVerFinanceiro()? ' <button class="linklike" data-fin-cliente="'+c.id+'">💰 financeiro</button>' : '')+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
+        '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">tabela & upgrade</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(podeVerFinanceiro()? ' <button class="linklike" data-fin-cliente="'+c.id+'">💰 financeiro</button>' : '')+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+posvendaClienteBtnHtml(c)+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
       '</div>'+
     '</div>';
   }).join("")+'</div>');
@@ -5749,10 +5755,150 @@ function viewParametros(){
   '</tbody></table></div></div></div>';
 }
 
+/* ================= CENTRAL DAS OPERADORAS + LINK DE PÓS-VENDA =================
+   Inspirado nas "Tabelas" do Koter: tudo de cada operadora num lugar (atendimento, dúvidas
+   comerciais, materiais) e um link público de pós-venda para mandar ao cliente.
+   Tabela operadoras_central (só equipe 'total'); o link público lê só pela função
+   posvenda_operadora(slug), e só o que estiver marcado para publicar. */
+var opCentralSel = null;
+var OPC_ATENDIMENTO = [
+  ["central_telefone","Central de atendimento (telefone)","ex: 0800 000 0000"],
+  ["whatsapp","WhatsApp da operadora","número com DDD"],
+  ["site","Site / área do cliente","https://..."],
+  ["app_android","App — Android (link da Play Store)","https://play.google.com/..."],
+  ["app_ios","App — iPhone (link da App Store)","https://apps.apple.com/..."],
+  ["teleconsulta","Teleconsulta / pronto atendimento digital","link ou telefone"],
+  ["reembolso","Pedido de reembolso","link ou instrução"],
+  ["segunda_via","2ª via de boleto","link"],
+  ["rede_link","Consulta de rede credenciada","https://..."],
+  ["carteirinha_info","Carteirinha digital (onde encontrar)","ex: no app, menu Carteirinha"]
+];
+var OPC_COMERCIAL = [
+  ["comercializacao","Comercialização","PME a partir de quantas vidas, MEI, adesão por entidade, regiões…"],
+  ["rede_credenciada","Rede credenciada (destaques)","hospitais e laboratórios fortes"],
+  ["carencia","Carência","prazos, redução, compra de carência"],
+  ["documentacao","Documentação","o que pedir ao cliente"],
+  ["diferenciais","Diferenciais","o que falar para vender"],
+  ["limite_idade","Limite de idade (titular e dependentes)","ex: filhos até 24 anos se universitários"],
+  ["observacoes","Observações importantes","pegadinhas, recusas comuns"]
+];
+function opSlug(nome){ return String(nome||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,""); }
+function opCentralDe(nome){ return (state.operadoras_central||[]).filter(function(o){ return o.operadora===nome; })[0] || null; }
+function opListaNomes(){
+  var nomes = OPERADORAS.filter(function(o){ return o!=="Outros"; });
+  (state.operadoras_central||[]).forEach(function(o){ if(nomes.indexOf(o.operadora)<0) nomes.push(o.operadora); });
+  return nomes;
+}
+function opLinkPosvenda(nome){ return location.origin + location.pathname.replace(/[^\/]*$/, "") + "posvenda.html?op=" + opSlug(nome); }
+function opOperadoraDoCliente(c){
+  var txt = (c.plano_nome||"")+" "+(c.categoria_contratada||"");
+  var achou = OPERADORA_APELIDOS.filter(function(p){ return p[1].test(txt); })[0];
+  return achou ? achou[0] : null;
+}
+function opPreenchimento(o){
+  if(!o) return 0;
+  var campos = OPC_ATENDIMENTO.concat(OPC_COMERCIAL).map(function(c){ return c[0]; });
+  return Math.round(campos.filter(function(k){ return o[k] && String(o[k]).trim(); }).length / campos.length * 100);
+}
+function viewOperadoras(){
+  var nomes = opListaNomes();
+  if(!opCentralSel || nomes.indexOf(opCentralSel)<0) opCentralSel = nomes[0];
+  var header = '<div class="topbar"><div><h1>Operadoras</h1><div class="desc">Tudo de cada operadora num lugar: atendimento, dúvidas comerciais e materiais. O link de pós-venda vai para o cliente com os contatos da operadora.</div></div></div>';
+  var lista = '<div class="opc-lista">'+nomes.map(function(n){
+    var o = opCentralDe(n), pct = opPreenchimento(o);
+    return '<button type="button" class="opc-item'+(n===opCentralSel?' active':'')+'" data-opc="'+escapeHtml(n)+'">'+
+      '<span class="opc-nome">'+escapeHtml(n)+'</span>'+
+      '<span class="opc-meta">'+(o && o.publicar_posvenda? '<span class="opc-pub">link ativo</span>' : '')+'<span class="opc-pct">'+(pct? pct+'%' : 'vazia')+'</span></span></button>';
+  }).join("")+'</div>';
+  var o = opCentralDe(opCentralSel) || {operadora: opCentralSel};
+  var campo = function(c){
+    var v = o[c[0]]||"", longo = /comercializacao|rede_credenciada|carencia|documentacao|diferenciais|observacoes|limite_idade/.test(c[0]);
+    return '<div class="field"><label for="opc-'+c[0]+'">'+c[1]+'</label>'+(longo? '<textarea id="opc-'+c[0]+'" rows="3" placeholder="'+escapeHtml(c[2])+'">'+escapeHtml(v)+'</textarea>' : '<input id="opc-'+c[0]+'" value="'+escapeHtml(v)+'" placeholder="'+escapeHtml(c[2])+'">')+'</div>';
+  };
+  var link = opLinkPosvenda(o.operadora);
+  var materiais = Array.isArray(o.materiais) ? o.materiais : [];
+  var detalhe = '<div class="opc-detalhe">'+
+    '<div class="opc-topo"><h2>'+escapeHtml(o.operadora)+'</h2><span class="muted">'+(o.atualizado_em? 'atualizado em '+fmtDateTime(o.atualizado_em)+(o.atualizado_por? ' por '+escapeHtml(nomeAutorEvento(o.atualizado_por)) : '') : 'ainda não preenchida')+'</span></div>'+
+    '<div class="opc-posvenda">'+
+      '<div><b>Link de pós-venda</b><div class="muted" style="font-size:12.5px;">Página com os contatos e links de atendimento desta operadora, com a marca One Plus. Mande ao cliente depois da venda.</div></div>'+
+      '<label class="opc-toggle"><input type="checkbox" id="opc-publicar"'+(o.publicar_posvenda?' checked':'')+'> publicar</label>'+
+      '<div class="opc-link"><code>'+escapeHtml(link)+'</code><button type="button" class="btn btn-sm" id="opc-copiar">Copiar link</button><a class="btn btn-sm" href="'+escapeHtml(link)+'" target="_blank" rel="noopener">Ver página</a></div>'+
+      (o.id && o.publicar_posvenda? '' : '<div class="muted" style="font-size:12px;">O link só mostra informações depois que você marcar "publicar" e salvar.</div>')+
+    '</div>'+
+    '<section class="opc-sec"><h3>Atendimento ao cliente <span class="muted">vai para o link de pós-venda</span></h3><div class="opc-grid">'+OPC_ATENDIMENTO.map(campo).join("")+'</div></section>'+
+    '<section class="opc-sec"><h3>Dúvidas comerciais <span class="muted">uso interno da equipe</span></h3><div class="opc-grid">'+OPC_COMERCIAL.map(campo).join("")+'</div></section>'+
+    '<section class="opc-sec"><h3>Materiais <span class="muted">tabelas, manuais, apresentações</span></h3>'+
+      (materiais.length? '<div class="opc-mats">'+materiais.map(function(m,i){ return '<div class="opc-mat"><span>📄 '+escapeHtml(m.nome)+'</span><span><button type="button" class="linklike" data-opc-abrir="'+i+'">abrir</button> · <button type="button" class="linklike" data-opc-rm="'+i+'" style="color:var(--danger);">remover</button></span></div>'; }).join("")+'</div>' : '<div class="muted" style="font-size:13px;">Nenhum material ainda.</div>')+
+      (o.id? '<label class="btn btn-sm" style="margin-top:8px;cursor:pointer;">+ Anexar PDF<input type="file" id="opc-arquivo" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg" multiple hidden></label>' : '<div class="muted" style="font-size:12px;margin-top:6px;">Salve a operadora para poder anexar materiais.</div>')+
+    '</section>'+
+    '<div class="opc-acoes"><button type="button" class="btn btn-primary" id="opc-salvar">Salvar '+escapeHtml(o.operadora)+'</button></div>'+
+  '</div>';
+  return header + '<div class="opc-layout">'+lista+detalhe+'</div>';
+}
+async function opSalvar(){
+  var nome = opCentralSel, atual = opCentralDe(nome);
+  var data = {operadora: nome, slug: opSlug(nome), publicar_posvenda: document.getElementById("opc-publicar").checked, atualizado_em: new Date().toISOString(), atualizado_por: currentUser()};
+  OPC_ATENDIMENTO.concat(OPC_COMERCIAL).forEach(function(c){ var el = document.getElementById("opc-"+c[0]); data[c[0]] = el && el.value.trim() ? el.value.trim() : null; });
+  var r = atual ? await sb.from("operadoras_central").update(data).eq("id", atual.id).select() : await sb.from("operadoras_central").insert(data).select();
+  if(r.error){ toast("Erro ao salvar: "+r.error.message); return; }
+  toast(nome+" salva."+(data.publicar_posvenda? " Link de pós-venda ativo." : ""));
+  await reload("operadoras_central");
+}
+async function opAnexar(files){
+  var o = opCentralDe(opCentralSel); if(!o || !files.length) return;
+  var mats = Array.isArray(o.materiais) ? o.materiais.slice() : [];
+  for(var i=0;i<files.length;i++){
+    var f = files[i], path = o.slug+"/"+Date.now()+"-"+opSlug(f.name.replace(/\.[^.]+$/,""))+(f.name.match(/\.[^.]+$/)||[""])[0].toLowerCase();
+    var up = await sb.storage.from("operadoras").upload(path, f, {upsert:false});
+    if(up.error){ toast("Erro ao enviar "+f.name+": "+up.error.message); continue; }
+    mats.push({nome: f.name, path: path, tamanho: f.size, em: new Date().toISOString()});
+  }
+  var r = await sb.from("operadoras_central").update({materiais: mats}).eq("id", o.id);
+  if(r.error){ toast("Erro ao salvar materiais: "+r.error.message); return; }
+  toast("Material anexado."); await reload("operadoras_central");
+}
+function wireOperadoras(){
+  if(state.tab!=="operadoras") return;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-opc]"), function(b){ b.onclick = function(){ opCentralSel = b.getAttribute("data-opc"); render(); }; });
+  var s = document.getElementById("opc-salvar"); if(s) s.onclick = opSalvar;
+  var c = document.getElementById("opc-copiar");
+  if(c) c.onclick = function(){ var link = opLinkPosvenda(opCentralSel); try{ navigator.clipboard.writeText(link).then(function(){ toast("Link copiado."); }, function(){ prompt("Copie o link:", link); }); }catch(e){ prompt("Copie o link:", link); } };
+  var f = document.getElementById("opc-arquivo"); if(f) f.onchange = function(){ opAnexar(Array.prototype.slice.call(f.files)); };
+  var o = opCentralDe(opCentralSel), mats = o && Array.isArray(o.materiais) ? o.materiais : [];
+  Array.prototype.forEach.call(document.querySelectorAll("[data-opc-abrir]"), function(b){ b.onclick = async function(){
+    var m = mats[parseInt(b.getAttribute("data-opc-abrir"),10)]; if(!m) return;
+    var r = await sb.storage.from("operadoras").createSignedUrl(m.path, 3600);
+    if(r.error){ toast("Não consegui abrir: "+r.error.message); return; } window.open(r.data.signedUrl, "_blank");
+  }; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-opc-rm]"), function(b){ b.onclick = async function(){
+    if(!b.getAttribute("data-confirmar")){ b.setAttribute("data-confirmar","1"); b.textContent = "clique de novo para remover"; return; }
+    var i = parseInt(b.getAttribute("data-opc-rm"),10), m = mats[i]; if(!m) return;
+    await sb.storage.from("operadoras").remove([m.path]);
+    var novos = mats.slice(0,i).concat(mats.slice(i+1));
+    var r = await sb.from("operadoras_central").update({materiais: novos}).eq("id", o.id);
+    if(r.error){ toast("Erro: "+r.error.message); return; } toast("Material removido."); await reload("operadoras_central");
+  }; });
+}
+/* Botão no cartão do cliente: manda o link de pós-venda da operadora dele pelo WhatsApp */
+function posvendaClienteBtnHtml(c){
+  var op = opOperadoraDoCliente(c), o = op && opCentralDe(op);
+  if(!o || !o.publicar_posvenda) return "";
+  return ' <button class="linklike" data-posvenda-cliente="'+c.id+'" title="Enviar ao cliente o link com os contatos da '+escapeHtml(op)+'">📲 pós-venda '+escapeHtml(op)+'</button>';
+}
+function enviarPosvendaCliente(c){
+  var op = opOperadoraDoCliente(c); if(!op) return;
+  var link = opLinkPosvenda(op), wa = linkWhatsApp(c.telefone);
+  var nome = (c.titular_nome||c.responsavel_financeiro||"").split(" ")[0];
+  var msg = "Olá"+(nome? " "+nome : "")+"! Aqui é da One Plus. Deixei neste link tudo o que você precisa do seu plano "+op+": central de atendimento, app, carteirinha, reembolso e rede credenciada. Qualquer dúvida, é só chamar a gente. "+link;
+  if(wa){ window.open(wa+"?text="+encodeURIComponent(msg), "_blank"); }
+  else { try{ navigator.clipboard.writeText(msg); toast("Cliente sem telefone. Mensagem copiada."); }catch(e){ prompt("Copie a mensagem:", msg); } }
+}
+
 /* ================= WIRE ================= */
 function wireActions(){
   wireMoneyInputs(document);
   wireEmpresas();
+  wireOperadoras();
   wireFinanceiro();
   var irCom = document.getElementById("btn-ir-comissao-cliente"); if(irCom) irCom.onclick = function(){ state.tab = "financeiro"; render(); window.scrollTo(0,0); };
   wireRetornos();
@@ -5761,6 +5907,7 @@ function wireActions(){
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-hist-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-hist-cliente");})[0]; if(c) openHistoricoModal(c); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-posvenda-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-posvenda-cliente");})[0]; if(c) enviarPosvendaCliente(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-oport-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-oport-cliente");})[0]; if(c) novaOportunidadeDoCliente(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-abrir-oport]"), function(btn){ btn.onclick=function(){ openLeadDetailPanel(btn.getAttribute("data-abrir-oport")); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-fin-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-fin-cliente");})[0]; if(c && podeVerFinanceiro()) openFinanceiroModal(c); }; });

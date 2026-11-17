@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seu plano · One Plus</title>
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --navy:#142942; --navy-2:#1f3a5c; --taupe:#ACA698; --ice:#e6eef7; --ice-line:#c9d8e8; --bg:#EDECEB; --surface:#fff; --text:#142942; --soft:#5f6670; --line:#dcdad4; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b1724; --surface:#132538; --text:#e8edf3; --soft:#a6b0bc; --line:#26405a; --ice:#173452; --ice-line:#2b4d75; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 Manrope, -apple-system, "Segoe UI", Arial, sans-serif; }
+  .topo { background: var(--navy); color: #fff; padding: calc(28px + env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) 34px max(20px, env(safe-area-inset-left, 0px)); text-align: center; }
+  .marca { font-weight: 700; letter-spacing: .02em; font-size: 15px; }
+  .bordao { font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--taupe); margin-top: 4px; }
+  .topo h1 { font-size: clamp(24px, 6vw, 32px); font-weight: 600; margin: 22px 0 6px; text-wrap: balance; }
+  .topo p { margin: 0 auto; max-width: 34ch; color: #cfd8e3; font-size: 14px; }
+  main { max-width: 560px; margin: -18px auto 0; padding: 0 max(16px, env(safe-area-inset-right, 0px)) 40px max(16px, env(safe-area-inset-left, 0px)); display: grid; gap: 10px; }
+  .item { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; text-decoration: none; color: var(--text); }
+  a.item:active { transform: scale(.985); }
+  .ic { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 13px; background: var(--ice); color: var(--navy); display: flex; align-items: center; justify-content: center; font-size: 19px; }
+  @media (prefers-color-scheme: dark) { .ic { color: #cfe0f2; } }
+  .tx { min-width: 0; }
+  .tx b { display: block; font-size: 15px; }
+  .tx span { color: var(--soft); font-size: 13px; overflow-wrap: anywhere; }
+  .seta { margin-left: auto; color: var(--soft); }
+  .oneplus { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .oneplus .ic { background: rgba(255,255,255,.12); color: #fff; }
+  .oneplus .tx span, .oneplus .seta { color: #cfd8e3; }
+  .vazio { text-align: center; color: var(--soft); background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px 18px; }
+  footer { text-align: center; color: var(--soft); font-size: 12px; padding: 10px 16px 30px; }
+</style>
+</head>
+<body>
+<div class="topo">
+  <div class="marca">ONE PLUS</div>
+  <div class="bordao">Gestão inteligente em saúde</div>
+  <h1 id="titulo">Seu plano de saúde</h1>
+  <p>Tudo o que você precisa do seu plano em um só lugar. Qualquer dúvida, fale com a gente.</p>
+</div>
+<main id="lista"><div class="vazio">Carregando…</div></main>
+<footer id="rodape">One Plus · corretora de seguros e benefícios</footer>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+(function(){
+  var ONEPLUS_WHATSAPP = "5511981915800";
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function digitos(s){ return String(s||"").replace(/\D/g,""); }
+  function ehLink(s){ return /^https?:\/\//i.test(String(s||"").trim()); }
+  function item(ic, titulo, valor, href){
+    if(href) return '<a class="item" href="'+esc(href)+'" target="_blank" rel="noopener"><span class="ic">'+ic+'</span><span class="tx"><b>'+esc(titulo)+'</b><span>'+esc(valor)+'</span></span><span class="seta">›</span></a>';
+    return '<div class="item"><span class="ic">'+ic+'</span><span class="tx"><b>'+esc(titulo)+'</b><span>'+esc(valor)+'</span></span></div>';
+  }
+  function campo(ic, titulo, v){
+    if(!v) return "";
+    v = String(v).trim();
+    if(ehLink(v)) return item(ic, titulo, "Abrir", v);
+    var d = digitos(v);
+    if(d.length>=8 && d.length<=13 && !/[a-z]{3,}/i.test(v)) return item(ic, titulo, v, "tel:"+d);
+    return item(ic, titulo, v, null);
+  }
+  var op = (new URLSearchParams(location.search).get("op")||"").toLowerCase().replace(/[^a-z0-9-]/g,"");
+  var lista = document.getElementById("lista");
+  var falarOnePlus = '<a class="item oneplus" href="https://wa.me/'+ONEPLUS_WHATSAPP+'?text='+encodeURIComponent("Olá, One Plus! Preciso de ajuda com o meu plano.")+'" target="_blank" rel="noopener"><span class="ic">💬</span><span class="tx"><b>Fale com a One Plus</b><span>WhatsApp (11) 98191-5800 · a gente resolve com a operadora para você</span></span><span class="seta">›</span></a>';
+  if(!op || !window.supabase){ lista.innerHTML = '<div class="vazio">Link incompleto. Fale com a One Plus.</div>'+falarOnePlus; return; }
+  var sb = window.supabase.createClient(window.ONEPLUS_CONFIG.SUPABASE_URL, window.ONEPLUS_CONFIG.SUPABASE_ANON_KEY, {auth:{persistSession:false}});
+  sb.rpc("posvenda_operadora", {p_slug: op}).then(function(r){
+    var d = r && r.data;
+    if(r.error || !d){ lista.innerHTML = '<div class="vazio">Ainda estamos preparando esta página. Enquanto isso, fale com a One Plus.</div>'+falarOnePlus; return; }
+    document.getElementById("titulo").textContent = "Seu plano " + d.operadora;
+    document.title = d.operadora + " · One Plus";
+    var wa = digitos(d.whatsapp);
+    var html = falarOnePlus +
+      campo("📞", "Central de atendimento "+d.operadora, d.central_telefone) +
+      (wa ? item("💬", "WhatsApp da "+d.operadora, d.whatsapp, "https://wa.me/"+(wa.length<=11? "55"+wa : wa)) : "") +
+      campo("🩺", "Teleconsulta / atendimento digital", d.teleconsulta) +
+      campo("🪪", "Carteirinha digital", d.carteirinha_info) +
+      campo("🏥", "Rede credenciada", d.rede_link) +
+      campo("🧾", "Reembolso", d.reembolso) +
+      campo("📄", "2ª via de boleto", d.segunda_via) +
+      campo("🤖", "App para Android", d.app_android) +
+      campo("📱", "App para iPhone", d.app_ios) +
+      campo("🌐", "Site e área do cliente", d.site);
+    lista.innerHTML = html;
+    if(d.atualizado_em) document.getElementById("rodape").textContent = "One Plus · informações atualizadas em " + new Date(d.atualizado_em).toLocaleDateString("pt-BR");
+  });
+})();
+</script>
+</body>
+</html>
