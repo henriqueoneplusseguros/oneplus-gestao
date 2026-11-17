@@ -585,35 +585,48 @@ var NAV_GRUPOS = [
   {nome:"Gestão", itens:["financeiro","parametros"]}
 ];
 function navGrupoAberto(nome){ try { return localStorage.getItem("op-menu-"+nome) === "1"; } catch(e){ return false; } } /* pastas começam fechadas; abrem sozinhas quando a tela atual está dentro */
+/* Navegação no modelo do Koter: trilho estreito de seções (ícone + rótulo pequeno)
+   e, ao lado, a coluna com as telas da seção atual. */
+var NAV_SECOES = [
+  {id:"inicio", label:"Início", icon:"grid", itens:["painel"]},
+  {id:"clientes", label:"Clientes", icon:"users", itens:["clientes"]},
+  {id:"comercial", label:"Comercial", icon:"filter", itens:["funil","consorcio","retornos","relatorios","empresas"]},
+  {id:"implantacao", label:"Implantação", icon:"flag", itens:["implantacao"]},
+  {id:"concierge", label:"Concierge", icon:"heart", itens:["tarefas","agenda","posvenda"]},
+  {id:"gestao", label:"Gestão", icon:"sliders", itens:["financeiro","parametros"]}
+];
 function renderNav(){
   var nav = document.getElementById("nav");
+  var sub = document.getElementById("subnav");
+  var tit = document.getElementById("subnav-titulo");
   var bell = document.getElementById("btn-notif"); if(bell) bell.style.display = state.perfil==="total" ? "" : "none";
   var itens = state.perfil==="total"
     ? NAV.filter(function(n){ if(n.id==="financeiro") return podeVerFinanceiro(); if(n.id==="relatorios") return podeVerRelatorios(); return true; })
     : NAV.filter(function(n){ return state.perfil==="consorcio" && n.id==="consorcio"; });
   var porId = {}; itens.forEach(function(n){ porId[n.id]=n; });
-  var usados = {};
-  function item(n){ usados[n.id]=1; return '<div class="navitem'+(state.tab===n.id?' active':'')+'" data-tab="'+n.id+'">'+ICONS[n.icon]+'<span>'+n.label+'</span></div>'; }
-  var html = NAV_GRUPOS.map(function(g){
-    var membros = g.itens.map(function(id){ return porId[id]; }).filter(Boolean);
-    if(!membros.length) return "";
-    if(!g.nome || state.perfil!=="total") return membros.map(item).join(""); /* perfil restrito: item solto, sem pasta */
-    var temAtivo = membros.some(function(n){ return n.id===state.tab; });
-    var aberto = temAtivo || navGrupoAberto(g.nome);
-    return '<div class="op-grupo'+(aberto?' aberto':'')+(temAtivo?' tem-ativo':'')+'" data-grupo="'+g.nome+'">'+
-      '<button type="button" class="op-grupo-btn" aria-expanded="'+aberto+'"><svg class="op-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg><span>'+g.nome+'</span><span class="op-grupo-n">'+membros.length+'</span></button>'+
-      '<div class="op-grupo-itens"><div>'+membros.map(item).join("")+'</div></div></div>';
-  }).join("") + itens.filter(function(n){ return !usados[n.id]; }).map(item).join("");
-  nav.innerHTML = html;
-  Array.prototype.forEach.call(nav.querySelectorAll(".navitem"), function(el){
-    el.addEventListener("click", function(){ state.tab = el.getAttribute("data-tab"); render(); });
-  });
-  Array.prototype.forEach.call(nav.querySelectorAll(".op-grupo-btn"), function(btn){
-    btn.addEventListener("click", function(){
-      var box = btn.parentNode, ab = box.classList.toggle("aberto");
-      btn.setAttribute("aria-expanded", ab);
-      try { localStorage.setItem("op-menu-"+box.getAttribute("data-grupo"), ab?"1":"0"); } catch(e){}
+  var secoes = NAV_SECOES.map(function(sc){ return {id:sc.id, label:sc.label, icon:sc.icon, itens: sc.itens.map(function(id){ return porId[id]; }).filter(Boolean)}; })
+    .filter(function(sc){ return sc.itens.length; });
+  var atual = secoes.filter(function(sc){ return sc.itens.some(function(n){ return n.id===state.tab; }); })[0] || secoes[0];
+  if(nav) nav.innerHTML = secoes.map(function(sc){
+    var on = atual && sc.id===atual.id;
+    return '<button type="button" class="railitem'+(on?' active':'')+'" data-secao="'+sc.id+'" title="'+escapeHtml(sc.label)+'" aria-current="'+(on?'page':'false')+'">'+
+      '<span class="rail-ic">'+ICONS[sc.icon]+'</span><span class="rail-lb">'+escapeHtml(sc.label)+'</span></button>';
+  }).join("");
+  if(tit) tit.textContent = atual ? atual.label : "";
+  if(sub) sub.innerHTML = atual ? atual.itens.map(function(n){
+    return '<div class="navitem'+(state.tab===n.id?' active':'')+'" data-tab="'+n.id+'" role="button" tabindex="0">'+ICONS[n.icon]+'<span>'+n.label+'</span></div>';
+  }).join("") : "";
+  if(nav) Array.prototype.forEach.call(nav.querySelectorAll(".railitem"), function(el){
+    el.addEventListener("click", function(){
+      var sc = secoes.filter(function(x){ return x.id===el.getAttribute("data-secao"); })[0]; if(!sc) return;
+      if(sc.itens.some(function(n){ return n.id===state.tab; })) return;
+      state.tab = sc.itens[0].id; render();
     });
+  });
+  if(sub) Array.prototype.forEach.call(sub.querySelectorAll(".navitem"), function(el){
+    var ir = function(){ state.tab = el.getAttribute("data-tab"); render(); };
+    el.addEventListener("click", ir);
+    el.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); ir(); } });
   });
 }
 

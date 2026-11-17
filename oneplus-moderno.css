@@ -700,3 +700,79 @@ table.grid tr.op-linha-atual td { background: var(--vital-bg); font-weight: 700;
 .op-grupo-itens .navitem { padding: 0 10px; gap: 9px; font-size: 13px; white-space: nowrap; }
 .op-grupo-itens .navitem span { overflow: hidden; text-overflow: ellipsis; }
 .op-grupo-itens > div { margin-left: 14px; padding-left: 6px; }
+
+/* =====================================================================
+   Navegação no modelo Koter (nov/2026): trilho de seções com ícone e
+   rótulo pequeno + coluna clara com as telas da seção atual.
+   ===================================================================== */
+.sidebar, .sidebar.sidebar {
+  width: auto; flex: 0 0 auto; padding: 0; display: flex; flex-direction: row;
+  background: transparent; overflow: visible; height: 100vh; position: sticky; top: 0;
+}
+.rail {
+  width: 76px; flex: 0 0 76px; height: 100vh; background: var(--sidebar-bg);
+  display: flex; flex-direction: column; align-items: center; padding: 14px 0 16px; overflow-y: auto;
+}
+.rail .brand { display: flex; justify-content: center; width: 52px; padding: 0 0 14px; margin: 0 0 10px; border-bottom: 1px solid rgba(255,255,255,0.10); }
+.rail .brand > div { display: contents; }
+.rail .brand-logo.brand-marca { width: 42px; height: 42px; }
+.rail .brand .op-pulso, .rail .brand .sub { display: none; }
+.rail-nav { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.railitem {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; width: 68px; padding: 2px 0;
+  background: none; border: 0; cursor: pointer; color: var(--sidebar-text);
+  font: 500 10px/1.2 var(--font-sans); letter-spacing: .01em; text-align: center;
+}
+.rail-ic {
+  width: 42px; height: 42px; border-radius: 13px; display: flex; align-items: center; justify-content: center;
+  transition: background .18s ease, color .18s ease, transform .18s cubic-bezier(.2,.8,.2,1);
+}
+.rail-ic svg { width: 20px; height: 20px; }
+.railitem:hover { color: #fff; }
+.railitem:hover .rail-ic { background: rgba(255,255,255,0.09); }
+.railitem:active .rail-ic { transform: scale(.92); }
+.railitem.active { color: #fff; font-weight: 700; }
+.railitem.active .rail-ic { background: var(--accent-blue); color: var(--navy-3); box-shadow: 0 6px 16px -6px rgba(169,189,213,.55); }
+.railitem:focus-visible { outline: none; }
+.railitem:focus-visible .rail-ic { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+
+.subnav {
+  width: 204px; flex: 0 0 204px; height: 100vh; overflow-y: auto;
+  background: var(--surface-2); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; padding: 20px 12px 14px;
+}
+.subnav-head { padding: 0 8px 14px; border-bottom: 1px solid var(--line); }
+.subnav-marca { font-family: var(--font-serif); font-size: 19px; line-height: 1.1; color: var(--text); }
+.subnav-head .sub { display: block; margin-top: 4px; font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-soft); }
+.subnav-titulo { margin: 16px 8px 8px; font: 700 10.5px var(--font-sans); letter-spacing: .12em; text-transform: uppercase; color: var(--text-soft); }
+.subnav-itens { display: flex; flex-direction: column; gap: 3px; }
+.subnav .navitem {
+  height: 36px; padding: 0 14px; gap: 10px; border-radius: 999px; border: 1px solid transparent;
+  color: var(--text); font: 500 13.5px var(--font-sans); white-space: nowrap; background: transparent; box-shadow: none;
+}
+.subnav .navitem svg { width: 17px; height: 17px; color: var(--text-soft); opacity: 1; }
+.subnav .navitem span { overflow: hidden; text-overflow: ellipsis; }
+.subnav .navitem:hover { background: var(--surface); color: var(--text); }
+.subnav .navitem.active { background: var(--surface); color: var(--text); font-weight: 700; border-color: var(--line); box-shadow: 0 1px 2px rgba(12,42,68,.06); padding-left: 14px; }
+.subnav .navitem.active svg { color: var(--navy); }
+.subnav .navitem.active::before { display: none; }
+.subnav .navitem:focus-visible { outline: 2px solid var(--focus, var(--navy)); outline-offset: 1px; }
+.subnav .whoami { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+.subnav .whoami .email { color: var(--text-soft); font-size: 11.5px; }
+.subnav .btn-logout, .subnav .notif-bell { background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+.subnav .btn-logout:hover, .subnav .notif-bell:hover { background: var(--line); }
+@media (prefers-color-scheme: dark) {
+  .subnav .navitem.active svg { color: var(--accent-blue); }
+}
+
+@media (max-width: 780px) {
+  .sidebar, .sidebar.sidebar { flex-direction: column; height: auto; position: static; width: 100%; }
+  .rail { width: 100%; flex: none; height: auto; flex-direction: row; padding: 8px 10px; overflow-x: auto; gap: 6px; }
+  .rail .brand { width: auto; border: 0; padding: 0 8px 0 0; margin: 0; }
+  .rail .brand-logo.brand-marca { width: 34px; height: 34px; }
+  .rail-nav { flex-direction: row; gap: 4px; }
+  .subnav { width: 100%; flex: none; height: auto; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .subnav-head, .subnav-titulo, .subnav .whoami { display: none; }
+  .subnav-itens { flex-direction: row; overflow-x: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .rail-ic { transition: none; } .railitem:active .rail-ic { transform: none; } }
