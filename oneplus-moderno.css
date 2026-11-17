@@ -776,3 +776,13 @@ table.grid tr.op-linha-atual td { background: var(--vital-bg); font-weight: 700;
   .subnav-itens { flex-direction: row; overflow-x: auto; }
 }
 @media (prefers-reduced-motion: reduce) { .rail-ic { transition: none; } .railitem:active .rail-ic { transform: none; } }
+
+/* Cadastro rápido por texto (nov/2026) */
+.op-rapido { border: 1px solid var(--accent-blue); background: var(--accent-blue-bg); border-radius: 16px; padding: 12px 14px; margin: 0 0 16px; display: grid; gap: 8px; }
+.op-rapido-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13.5px; color: var(--text); }
+.op-rapido-head .muted { font-size: 12px; }
+.op-rapido-ic { color: var(--navy); font-size: 14px; }
+.op-rapido textarea { width: 100%; min-height: 54px; resize: vertical; border-radius: 12px; background: var(--surface); }
+.op-rapido-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.op-rapido-foot .muted { font-size: 12px; }
+@media (prefers-color-scheme: dark) { .op-rapido-ic { color: var(--accent-blue); } }

@@ -3248,11 +3248,118 @@ async function removerAnexoLead(anexo){
   return await dbDelete("lead_anexos", anexo.id);
 }
 
+/* ===== Cadastro rápido por texto (no estilo do Kota.ai do Koter) =====
+   Cole a mensagem do cliente ("Padaria Sol, 3 vidas, 34, 31 e 2 anos, quer Amil, 11 99999-0000")
+   e o sistema preenche o formulário. Tudo por regras locais: nada sai do navegador. */
+var OPERADORA_APELIDOS = [
+  ["SulAmérica", /sul\s*am[eé]rica/i], ["NotreDame", /notre\s*dame|hapvida/i], ["Prevent Sênior", /prevent/i],
+  ["MedSênior", /med\s*s[eê]nior/i], ["Care Plus", /care\s*plus/i], ["Porto Seguro", /\bporto\b/i],
+  ["São Cristóvão", /s[aã]o\s*crist[oó]v[aã]o/i], ["Bradesco", /bradesco/i], ["Amil", /\bamil\b/i],
+  ["Omint", /\bomint\b/i], ["Alice", /\balice\b/i], ["Ever", /\bever\b/i]
+];
+var PALAVRAS_EMPRESA = /\b(ltda|me|eireli|epp|s\/?a|padaria|cl[ií]nica|consult[oó]rio|escrit[oó]rio|loja|restaurante|comércio|comercio|consultoria|ind[uú]stria|transportes?|construtora|imobili[aá]ria|engenharia|servi[cç]os|distribuidora|academia|farm[aá]cia|odontologia|advogados|contabilidade|empresa|grupo|instituto)\b/i;
+function interpretarPedido(texto){
+  var t = " "+String(texto||"").replace(/\s+/g," ").trim()+" ", r = {achados:[]};
+  if(!t.trim()) return r;
+  var m = t.match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if(m){ r.email = m[0]; t = t.replace(m[0]," "); }
+  m = t.match(/(\+?55\s*)?\(?\b\d{2}\)?\s*9?\s?\d{4}[-\s.]?\d{4}\b/); if(m){ r.telefone = m[0].trim(); t = t.replace(m[0]," "); }
+  m = t.match(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/); if(m){ r.cnpj = m[0]; t = t.replace(m[0]," "); }
+  m = t.match(/R\$\s*([\d.]+(?:,\d{1,2})?)/i);
+  if(m){ var antesV = t.slice(Math.max(0, t.indexOf(m[0])-25), t.indexOf(m[0]));
+    if(/(hoje|atual|pag(a|am|amos)|gast(a|am))/i.test(antesV)) r.valorAtual = parseMoneyBR(m[1]); else r.valor = parseMoneyBR(m[1]);
+    t = t.replace(m[0]," "); }
+  m = t.match(/\b(\d{1,3})\s*(vidas?|pessoas|funcion[aá]rios|colaboradores|benefici[aá]rios)\b/i); if(m){ r.vidas = parseInt(m[1],10); if(/funcion|colabor/i.test(m[2])) r.tipo = "PME"; t = t.replace(m[0]," "); }
+  /* idades: "34 anos", listas "34, 31 e 2", "bebê de 8 meses" */
+  var idades = [];
+  t = t.replace(/\b(\d{1,2})\s*(meses|m[eê]s)\b/gi, function(){ idades.push(0); return " "; });
+  var trecho = t.match(/(?:idades?|anos|de)\s*[:\-]?\s*((?:\d{1,2}\s*(?:anos?)?\s*(?:,|e|\/|;)\s*)*\d{1,2}\s*(?:anos?)?)/gi) || [];
+  var lista = t.match(/\b\d{1,2}(?:\s*(?:,|\be\b|\/|;)\s*\d{1,2}){1,}\b/g) || [];
+  trecho.concat(lista).forEach(function(seg){ (seg.match(/\b\d{1,2}\b/g)||[]).forEach(function(n){ idades.push(parseInt(n,10)); }); });
+  (t.match(/\b(\d{1,2})\s*anos?\b/gi)||[]).forEach(function(s){ idades.push(parseInt(s,10)); });
+  /* tira duplicatas causadas por padrões sobrepostos, mantendo a ordem do texto */
+  var vistos = {}, ordem = [];
+  (t.match(/\b\d{1,2}\b/g)||[]).forEach(function(n){ var v = parseInt(n,10); if(idades.indexOf(v)>=0){ vistos[v] = (vistos[v]||0)+1; ordem.push(v); } });
+  if(ordem.length){ idades = ordem.concat(idades.filter(function(v){ return v===0; })); }
+  r.idades = idades.filter(function(v){ return v>=0 && v<=99; });
+  var achadas = OPERADORA_APELIDOS.map(function(p){ var i = t.search(p[1]); return i>=0 ? {nome:p[0], re:p[1], i:i} : null; }).filter(Boolean).sort(function(a,b){ return a.i-b.i; });
+  achadas.forEach(function(op){
+    var antes = t.slice(Math.max(0, op.i-30), op.i).split(/[,.;!?]/).pop();
+    if(/(hoje|atual|atualmente|pag(a|am|amos)|est(á|a|ão|ao)\s+n[ao]|tem\s+(o\s+)?plano)/i.test(antes)){ if(!r.planoAtual) r.planoAtual = op.nome; return; }
+    if(r.operadora){ r.alternativas = (r.alternativas||[]).concat(op.nome); return; }
+    r.operadora = op.nome;
+    var mm = t.slice(op.i).match(op.re);
+    var depois = t.slice(op.i+mm[0].length).match(/^\s*((?:black|platinum|one|ouro|prata|bronze|s\s?\d{3}|\d{3}|cl[aá]ssico|especial|executivo|conforto|exclusivo|top|max|mais|qp|qc|r1|enfermaria|apartamento|\s)+)/i);
+    if(depois && depois[1].trim()) r.categoria = (op.nome+" "+depois[1].trim().replace(/\s+/g," ")).replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+  });
+  if(/cons[oó]rcio/i.test(t)) r.produto = "Consórcio";
+  else if(/seguro de vida|\bvida em grupo\b/i.test(t)) r.produto = "Vida";
+  else r.produto = "Saúde";
+  m = t.match(/\bem\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ú]+(?:\s+(?:d[aeo]s?\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÀ-ú]+)*)/); if(m) r.cidade = m[1];
+  if(r.tipo==="PME" || /\b(pme|cnpj|mei|empresa|funcion[aá]rios|colaboradores|s[oó]cios)\b/i.test(t) || r.cnpj) r.tipo = "PME";
+  else if(/\b(ades[aã]o|entidade|profiss[aã]o|conselho|sindicato)\b/i.test(t)) r.tipo = "Adesão";
+  else if(/\b(fam[ií]lia|individual|pf|pessoa f[ií]sica|esposa|marido|filh[oa]s?)\b/i.test(t)) r.tipo = "Individual/Familiar";
+  m = t.match(/\b(?:contato|respons[aá]vel|falar com|com a|com o)\s*:?\s+([A-ZÁÉÍÓÚÂÊÔÇ][a-zà-ú]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÇ][a-zà-ú]+)?)/i); if(m && !/^(a|o)$/i.test(m[1])) r.nome = m[1];
+  m = t.match(/fam[ií]lia\s+d[aoe]\s+([A-ZÁÉÍÓÚÂÊÔÇ][\wÀ-ú]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÇ][\wÀ-ú]+)?)/);
+  if(m) r.nome = m[1];
+  var PROIBIDAS = /\b(oi|ol[aá]|bom|boa|dia|tarde|noite|quer|precisa|cota[çc][aã]o|plano|cons[oó]rcio|im[oó]vel|ve[ií]culo|seguro|vida|vidas|idades?|anos|hoje|contato|cnpj|em|pagam|para|ela|ele|filho|filha|beb[eê])\b/i;
+  String(texto||"").replace(/^(oi|ol[aá]|bom dia|boa tarde|boa noite)[!,.\s]*/i,"").split(/[,;:\n!?]| - /).some(function(seg){
+    seg = seg.trim(); if(!seg || /@/.test(seg)) return false;
+    if(/\d/.test(seg) || seg.length>60){ var so = seg.match(/^([A-ZÁÉÍÓÚÂÊÔÇ][a-zà-ú]+(?:\s+(?:d[aeo]s?\s+)?[A-ZÁÉÍÓÚÂÊÔÇ][a-zà-ú]+){0,3})\s+(quer|precisa|procura|gostaria|tem)\b/); if(so && !r.nome && !PALAVRAS_EMPRESA.test(so[1])) r.nome = so[1]; return false; }
+    if(OPERADORA_APELIDOS.some(function(p){ return p[1].test(seg); }) || /fam[ií]lia/i.test(seg)) return false;
+    if(PALAVRAS_EMPRESA.test(seg)){ if(!r.empresa) r.empresa = seg; return false; }
+    var nm = seg.match(/^([A-ZÁÉÍÓÚÂÊÔÇ][a-zà-ú]+(?:\s+(?:d[aeo]s?\s+)?[A-ZÁÉÍÓÚÂÊÔÇ][a-zà-ú]+){0,3})\b/);
+    if(nm && !PROIBIDAS.test(nm[1]) && !r.nome){ r.nome = nm[1]; }
+    return !!(r.nome && r.empresa);
+  });
+  if(r.tipo==="PME" && r.nome && !r.empresa && PALAVRAS_EMPRESA.test(r.nome)){ r.empresa = r.nome; r.nome = undefined; }
+  return r;
+}
+function preencherLeadComPedido(r){
+  var feitos = [];
+  function pora(id, v, rotulo){ var el = document.getElementById(id); if(!el || v==null || v==="") return; if(el.value && el.value.trim()) return; el.value = v; feitos.push(rotulo); }
+  pora("l-nome", r.nome, "contato"); pora("l-empresa", r.empresa, "empresa"); pora("l-telefone", r.telefone, "telefone"); pora("l-email", r.email, "e-mail");
+  if(r.valor){ pora("l-valor", moneyDisplay(r.valor), "valor"); }
+  var prod = document.getElementById("l-produto"); if(prod && r.produto && r.produto!=="Saúde"){ prod.value = r.produto; feitos.push("produto"); }
+  if(r.operadora){
+    var sel = document.getElementById("l-operadora");
+    if(sel && !sel.value){ sel.value = OPERADORAS.indexOf(r.operadora)>=0 ? r.operadora : "Outros"; sel.dispatchEvent(new Event("change")); feitos.push(r.operadora); }
+  }
+  pora("l-categoria-plano", r.categoria, "plano");
+  if(r.idades && r.idades.length){
+    var inp = document.getElementById("l-idade-input"), add = document.getElementById("l-idade-add");
+    if(inp && add){ inp.value = r.idades.join(", "); add.click(); feitos.push(r.idades.length+" idade(s)"); }
+  } else if(r.vidas){ pora("l-vidas", r.vidas, r.vidas+" vidas"); }
+  var extras = [r.tipo? "Tipo: "+r.tipo : "", r.planoAtual? "Plano atual: "+r.planoAtual : "", r.valorAtual? "Paga hoje: "+fmtMoney(r.valorAtual)+"/mês" : "", r.alternativas? "Também citou: "+r.alternativas.join(", ") : "", r.cidade? "Cidade: "+r.cidade : "", r.cnpj? "CNPJ: "+r.cnpj : "", (r.vidas && r.idades && r.idades.length && r.vidas!==r.idades.length)? "Cliente falou em "+r.vidas+" vidas" : ""].filter(Boolean);
+  var obs = document.getElementById("l-obs"), txt = document.getElementById("l-rapido-texto");
+  if(obs && txt && txt.value.trim()){
+    obs.value = [obs.value.trim(), extras.join(" · "), "Pedido do cliente: "+txt.value.trim()].filter(Boolean).join("\n");
+    if(extras.length) feitos.push(extras.join(", ").toLowerCase());
+  }
+  return feitos;
+}
+function cadastroRapidoHtml(){
+  return '<div class="op-rapido">'+
+    '<div class="op-rapido-head"><span class="op-rapido-ic" aria-hidden="true">✦</span><b>Cadastro rápido</b><span class="muted">cole a mensagem do cliente e o sistema preenche</span></div>'+
+    '<textarea id="l-rapido-texto" rows="2" placeholder="Ex.: Padaria Sol, 3 vidas: 34, 31 e 2 anos, quer Amil Black, em São Paulo, 11 98888-7777"></textarea>'+
+    '<div class="op-rapido-foot"><span class="muted" id="l-rapido-res"></span><button type="button" class="btn btn-sm btn-primary" id="l-rapido-btn">Preencher</button></div>'+
+  '</div>';
+}
+function wireCadastroRapido(){
+  var b = document.getElementById("l-rapido-btn"), t = document.getElementById("l-rapido-texto"), res = document.getElementById("l-rapido-res");
+  if(!b || !t) return;
+  b.onclick = function(){
+    if(!t.value.trim()){ t.focus(); return; }
+    var feitos = preencherLeadComPedido(interpretarPedido(t.value));
+    res.textContent = feitos.length ? "Preenchido: "+feitos.join(" · ")+". Confira antes de salvar." : "Não reconheci dados novos. Preencha abaixo.";
+  };
+  t.addEventListener("keydown", function(e){ if(e.key==="Enter" && (e.ctrlKey||e.metaKey)){ e.preventDefault(); b.click(); } });
+}
+
 function leadFormHtml(l){
   l=l||{etapa:"Qualificação",produto:"Saúde",vendedor:"Henrique"};
   var operadoraAtual = l.operadora && OPERADORAS.indexOf(l.operadora)===-1 ? "Outros" : (l.operadora||"");
   var operadoraOutrosValor = (l.operadora && OPERADORAS.indexOf(l.operadora)===-1) ? l.operadora : "";
-  return '<div class="field row2"><div class="field"><label>Nome do contato</label><input id="l-nome" value="'+escapeHtml(l.nome||"")+'"></div><div class="field"><label>Empresa</label><input id="l-empresa" value="'+escapeHtml(l.empresa||"")+'"></div></div>'+
+  return (l.id? '' : cadastroRapidoHtml())+'<div class="field row2"><div class="field"><label>Nome do contato</label><input id="l-nome" value="'+escapeHtml(l.nome||"")+'"></div><div class="field"><label>Empresa</label><input id="l-empresa" value="'+escapeHtml(l.empresa||"")+'"></div></div>'+
   '<div class="field row2"><div class="field"><label>Telefone / WhatsApp</label><input id="l-telefone" type="tel" inputmode="tel" value="'+escapeHtml(l.telefone||"")+'" placeholder="(11) 99999-9999"></div><div class="field"><label>E-mail</label><input id="l-email" type="email" value="'+escapeHtml(l.email||"")+'" placeholder="nome@empresa.com.br"></div></div>'+
   idadesFieldHtml(l.idades)+
   '<div class="field row2"><div class="field"><label>Produto</label><select id="l-produto">'+PRODUTOS.map(function(p){return '<option'+(l.produto===p?' selected':'')+'>'+p+'</option>';}).join("")+'</select></div><div class="field"><label>Vendedor(a)</label><select id="l-vendedor">'+VENDEDORES.map(function(v){return '<option'+(l.vendedor===v?' selected':'')+'>'+v+'</option>';}).join("")+'</select></div></div>'+
@@ -3271,6 +3378,7 @@ function leadFormHtml(l){
 }
 function wireLeadFormExtra(){
   wireIdadesField();
+  wireCadastroRapido();
   var sel = document.getElementById("l-operadora");
   var wrap = document.getElementById("l-operadora-outros-wrap");
   if(sel && wrap){
