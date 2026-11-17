@@ -759,7 +759,9 @@ function viewClientes(){
         '<div class="info-item"><span class="k">Revisão</span><span>'+(rev? (rev.overdue?'<span class="pill pill-bad">atrasada</span>':fmtDateISO(rev.date)) : '—')+'</span></div>'+
       '</div>'+
       vidasValoresHtml(c)+
+      oportunidadesDoClienteHtml(c)+
       '<div class="client-card-foot">'+
+        (c.status!=="Cancelado"? '<button type="button" class="btn-oportunidade" data-oport-cliente="'+c.id+'" title="Criar uma nova oportunidade no Funil Comercial com os dados deste cliente. O contrato atual continua na carteira.">+ Criar oportunidade</button>' : '')+
         '<button class="linklike" data-edit-cliente="'+c.id+'">editar</button> <button class="linklike" data-hist-cliente="'+c.id+'">tabela & upgrade</button>'+(c.boleto_ativo? ' <button class="linklike" data-boleto-cliente="'+c.id+'">boletos</button>' : '')+' <button class="linklike" data-carencias-cliente="'+c.id+'">carências</button> <button class="linklike" data-acesso-cliente="'+c.id+'">'+(c.portal_login||c.portal_senha? '🔑 acesso' : 'acesso')+'</button>'+(podeVerFinanceiro()? ' <button class="linklike" data-fin-cliente="'+c.id+'">💰 financeiro</button>' : '')+(c.drive_link? ' <a class="linklike" href="'+escapeHtml(c.drive_link)+'" target="_blank" rel="noopener">📁 Drive</a>' : '')+' <button class="linklike" data-del-cliente="'+c.id+'" style="color:var(--danger);">excluir</button>'+
       '</div>'+
     '</div>';
@@ -2873,6 +2875,7 @@ function viewFunilKanban(byEtapa, agoraISO){
           '<div class="k-title" style="display:flex;align-items:flex-start;">'+tempDotHtml(l)+'<span>'+escapeHtml(l.nome||"—")+(l.empresa?' <span class="muted">('+escapeHtml(l.empresa)+')</span>':'')+'</span></div>'+
           '<div class="muted">'+escapeHtml(l.produto||"—")+' · '+escapeHtml(l.vendedor||"—")+'</div>'+
           '<div class="rowflex" style="margin-top:4px;gap:6px;">'+
+            (l.cliente_origem_id? '<span class="tag tag-carteira" title="Cliente da carteira One Plus">carteira</span>' : '')+
             (operadoraTag(l)||'')+
             (l.etapa==="Perdido" && l.retomar_em? '<span class="tag" title="Retomar contato">↻ '+fmtDateISO(l.retomar_em)+'</span>' : '')+
             (parado>LIMITE_DIAS_PARADO? '<span class="badge-stale">🔥 parado '+parado+'d</span>' : '')+
@@ -3293,6 +3296,7 @@ function openLeadModal(existing, onSaved, seed){
     };
     if(!data.nome && !data.empresa){ toast("Informe nome ou empresa."); return; }
     if(!existing && seed && seed.empresa_id) data.empresa_id = seed.empresa_id;
+    if(!existing && seed && seed.cliente_origem_id) data.cliente_origem_id = seed.cliente_origem_id;
     if(novaEtapa==="Ganho" && !(existing && existing.data_ganho)){ data.data_ganho = todayISO(); }
     if(!existing || existing.etapa!==novaEtapa){ data.etapa_atualizada_em = new Date().toISOString(); }
     if(data.idades.length) data.quantidade_vidas = data.idades.length;
@@ -3393,7 +3397,9 @@ function openLeadDetailPanel(leadId){
 
   var body =
     '<div class="side-panel-head">'+
-      '<div class="rowflex"><div><h2>'+escapeHtml(lead.nome||lead.empresa||"—")+'</h2><div class="muted">'+escapeHtml(lead.produto||"—")+' · '+escapeHtml(lead.vendedor||"—")+'</div></div><button class="panel-close" id="panel-close">&times;</button></div>'+
+      '<div class="rowflex"><div><h2>'+escapeHtml(lead.nome||lead.empresa||"—")+'</h2><div class="muted">'+escapeHtml(lead.produto||"—")+' · '+escapeHtml(lead.vendedor||"—")+'</div>'+
+        (clienteOrigemDoLead(lead)? '<div style="margin-top:6px;"><span class="tag tag-carteira">Cliente da carteira</span> <span class="muted" style="font-size:12.5px;">contrato atual: '+escapeHtml(clienteOrigemDoLead(lead).plano_nome||"—")+' · '+fmtMoney(clienteOrigemDoLead(lead).valor_contrato_total||0)+'/mês</span></div>' : '')+
+      '</div><button class="panel-close" id="panel-close">&times;</button></div>'+
       '<div class="rowflex" style="gap:8px;margin-top:10px;align-items:center;"><span class="muted" style="font-size:12px;">Temperatura:</span>'+TEMPERATURAS.slice().reverse().map(function(t){ var on = lead.temperatura===t.k; return '<button type="button" class="btn btn-sm '+(on?'':'btn-ghost')+'" data-panel-temp="'+t.k+'" style="'+(on? 'background:'+t.cor+';border-color:'+t.cor+';color:#fff;' : '')+'"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+(on?'#fff':t.cor)+';margin-right:5px;"></span>'+t.label+'</button>'; }).join("")+'</div>'+
       '<div class="stage-stepper" style="margin-top:12px;">'+stepperHtml+'</div>'+
     '</div>'+
@@ -4360,6 +4366,32 @@ function openRetornoModal(lead, onDone){
 async function descartarRetorno(lead){
   if(!confirm('Tirar "'+(lead.nome||lead.empresa||"este lead")+'" dos contatos futuros? Ele continua como perdido no funil.')) return;
   await agendarRetorno(lead, null, lead.retomar_obs);
+}
+/* ===== Nova oportunidade a partir de um cliente da carteira (revenda / novo produto / novo sócio) =====
+   Cria um negócio NOVO no Funil Comercial ligado ao cliente (leads.cliente_origem_id).
+   O contrato atual do cliente não é alterado nem excluído. Se a oportunidade for ganha, a implantação
+   gera um cadastro de cliente novo (ex.: Senhor Sin Porto continua + Senhor Sin Amil Black). */
+function clienteOrigemDoLead(lead){ return lead && lead.cliente_origem_id ? state.clientes.filter(function(c){ return c.id===lead.cliente_origem_id; })[0] : null; }
+function oportunidadesDoCliente(clienteId){ return state.leads.filter(function(l){ return l.cliente_origem_id===clienteId; }); }
+function oportunidadesDoClienteHtml(c){
+  var abertas = oportunidadesDoCliente(c.id).filter(function(l){ return l.etapa!=="Perdido" && !(l.etapa==="Ganho" && clienteDoLead(l.id)); });
+  if(!abertas.length) return "";
+  return '<div class="op-carteira-oport">'+abertas.map(function(l){
+    return '<button type="button" data-abrir-oport="'+l.id+'" title="Abrir a oportunidade">↗ Oportunidade: '+escapeHtml(l.produto||"Saúde")+(l.operadora? ' · '+escapeHtml(l.operadora) : '')+' · '+escapeHtml(l.etapa)+'</button>';
+  }).join("")+'</div>';
+}
+function novaOportunidadeDoCliente(c){
+  var linhas = ["Cliente da carteira One Plus. Contrato atual: "+(c.plano_nome||c.produto||"—")+" · "+fmtMoney(c.valor_contrato_total||0)+"/mês"+(c.vigencia_inicio? " · vigência desde "+fmtDateISO(c.vigencia_inicio) : "")+".",
+    "Nova oportunidade — o contrato atual continua ativo na carteira."];
+  var seed = {
+    etapa: "Qualificação", produto: "Saúde", vendedor: VENDEDORES.indexOf(currentUserName())>=0 ? currentUserName() : (c.vendedor || "Henrique"),
+    nome: c.titular_nome || c.responsavel_financeiro || "", empresa: c.razao_social || "", telefone: c.telefone || "", email: c.email || "",
+    origem: "Carteira One Plus", observacoes: linhas.join("\n"), cliente_origem_id: c.id
+  };
+  openLeadModal(null, function(novoId){
+    toast("Oportunidade criada no Funil Comercial. O contrato atual continua na carteira.");
+    if(novoId){ registrarEventoLead(novoId, "dados", "Criada a partir da carteira: "+clienteLabel(c), {detalhe: "contrato atual: "+(c.plano_nome||"—")}); openLeadDetailPanel(novoId); }
+  }, seed);
 }
 function novaOportunidadeDoRetorno(lead){
   var seed = {
@@ -5608,6 +5640,8 @@ function wireActions(){
   var btnNovoCliente = document.getElementById("btn-novo-cliente"); if(btnNovoCliente) btnNovoCliente.onclick=function(){openClienteModal(null);};
   Array.prototype.forEach.call(document.querySelectorAll("[data-edit-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-edit-cliente");})[0]; openClienteModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-hist-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-hist-cliente");})[0]; if(c) openHistoricoModal(c); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-oport-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-oport-cliente");})[0]; if(c) novaOportunidadeDoCliente(c); }; });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-abrir-oport]"), function(btn){ btn.onclick=function(){ openLeadDetailPanel(btn.getAttribute("data-abrir-oport")); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-fin-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-fin-cliente");})[0]; if(c && podeVerFinanceiro()) openFinanceiroModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-acesso-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-acesso-cliente");})[0]; if(c) acessoPortalModal(c); }; });
     Array.prototype.forEach.call(document.querySelectorAll("[data-carencias-cliente]"), function(btn){ btn.onclick=function(){ var c=state.clientes.filter(function(x){return x.id===btn.getAttribute("data-carencias-cliente");})[0]; if(c) openCarenciasModal(c); }; });

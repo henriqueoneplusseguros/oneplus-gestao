@@ -590,3 +590,78 @@ table.grid tr.op-linha-atual td { background: var(--vital-bg); font-weight: 700;
 @media (max-width: 860px) { .op-vida { grid-template-columns: 1fr auto; } .op-vida-faixa { display: none; } }
 .op-valor-hint { display: block; margin-top: 4px; }
 .op-valor-hint:empty { display: none; }
+
+/* =====================================================================
+   Botões leves (nov/2026) — formato pílula, contorno fino, toque suave.
+   Inspirado na experiência do Koter; mantém as cores da One Plus.
+   ===================================================================== */
+.btn {
+  height: 36px; padding: 0 16px; border-radius: 999px;
+  font: 600 13.5px/1 var(--font-sans);
+  border: 1px solid var(--line); box-shadow: none;
+  transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease;
+}
+.btn:hover { background: var(--surface-2); border-color: var(--line-strong); }
+.btn:active { transform: scale(.97); }
+.btn-primary { background: var(--navy); color: var(--on-navy); border-color: var(--navy); }
+.btn-primary:hover { background: var(--navy-2); border-color: var(--navy-2); box-shadow: 0 6px 18px -8px rgba(12,42,68,.55); transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0) scale(.97); }
+.btn-ghost { background: var(--surface); border-color: var(--line); color: var(--text); }
+.btn-ghost:hover { background: var(--surface-2); }
+.btn-danger { border-radius: 999px; }
+.btn-concierge { border-radius: 999px; }
+.btn-sm { height: 30px; padding: 0 12px; font-size: 12.5px; }
+.btn-lg { height: 46px; padding: 0 22px; border-radius: 999px; }
+
+/* Alternadores (Kanban/Lista, abas internas): pílulas, a ativa preenchida */
+.viewtoggle, .tabs2 { gap: 6px; padding: 0; background: transparent; border: 0; border-radius: 999px; }
+.viewtoggle button, .tab2 {
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  height: 32px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text-soft); font: 600 13px var(--font-sans);
+  transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease;
+}
+.viewtoggle button:hover, .tab2:hover { color: var(--text); border-color: var(--line-strong); }
+.viewtoggle button:active, .tab2:active { transform: scale(.96); }
+.viewtoggle button.active, .tab2.active { background: var(--navy); color: var(--on-navy); border-color: var(--navy); box-shadow: none; }
+
+/* Fechar (modal e painel lateral): botão redondo */
+.modal-close, .panel-close {
+  width: 34px; height: 34px; border-radius: 50%; border: 0; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--text-soft); font-size: 18px; line-height: 1; cursor: pointer;
+  transition: background .18s ease, color .18s ease, transform .18s ease;
+}
+.modal-close:hover, .panel-close:hover { background: var(--line); color: var(--text); }
+.modal-close:active, .panel-close:active { transform: scale(.92); }
+
+/* Etapas do negócio em pílula */
+.stage-step { border-radius: 999px; }
+
+/* Ações do cartão (editar, + tarefa, excluir) e dos cartões de cliente: chips */
+.kanban-card .k-actions { gap: 6px; flex-wrap: wrap; }
+.kanban-card .k-actions .linklike, .client-card-foot .linklike {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  font-size: 12px; font-weight: 600; text-decoration: none; margin: 2px 2px 2px 0;
+  transition: background .18s ease, border-color .18s ease, transform .18s ease;
+}
+.kanban-card .k-actions .linklike:hover, .client-card-foot .linklike:hover { background: var(--surface-2); border-color: var(--line-strong); text-decoration: none; }
+.kanban-card .k-actions .linklike:active, .client-card-foot .linklike:active { transform: scale(.95); }
+.client-card-foot .btn-oportunidade {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px;
+  background: var(--navy); color: var(--on-navy); border: 1px solid var(--navy); font: 600 12px var(--font-sans); cursor: pointer; margin: 2px 4px 2px 0;
+  transition: background .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.client-card-foot .btn-oportunidade:hover { background: var(--navy-2); box-shadow: 0 6px 18px -8px rgba(12,42,68,.55); transform: translateY(-1px); }
+.client-card-foot .btn-oportunidade:active { transform: scale(.96); }
+.op-carteira-oport { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.op-carteira-oport button {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--accent-blue); background: var(--accent-blue-bg); color: var(--tag-text); font: 600 12px var(--font-sans);
+}
+.op-carteira-oport button:hover { filter: brightness(.97); }
+.tag-carteira { background: var(--accent-blue-bg); color: var(--tag-text); border: 1px solid var(--accent-blue); }
+@media (prefers-reduced-motion: reduce) {
+  .btn, .viewtoggle button, .tab2, .modal-close, .panel-close, .client-card-foot .btn-oportunidade { transition: none; }
+  .btn:active, .btn-primary:hover, .client-card-foot .btn-oportunidade:hover { transform: none; }
+}
