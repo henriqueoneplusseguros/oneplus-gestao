@@ -579,12 +579,12 @@ var ICONS = {
 var NAV_GRUPOS = [
   {nome:null, itens:["painel"]},
   {nome:null, itens:["clientes"]},
-  {nome:null, itens:["funil","consorcio","retornos","relatorios","empresas"]},
+  {nome:"Comercial", itens:["funil","consorcio","retornos","relatorios","empresas"]},
   {nome:null, itens:["implantacao"]},
   {nome:"Concierge", itens:["tarefas","agenda","posvenda"]},
   {nome:"Gestão", itens:["financeiro","parametros"]}
 ];
-function navGrupoAberto(nome){ try { return localStorage.getItem("op-menu-"+nome) !== "0"; } catch(e){ return true; } }
+function navGrupoAberto(nome){ try { return localStorage.getItem("op-menu-"+nome) === "1"; } catch(e){ return false; } } /* pastas começam fechadas; abrem sozinhas quando a tela atual está dentro */
 function renderNav(){
   var nav = document.getElementById("nav");
   var bell = document.getElementById("btn-notif"); if(bell) bell.style.display = state.perfil==="total" ? "" : "none";
@@ -597,7 +597,7 @@ function renderNav(){
   var html = NAV_GRUPOS.map(function(g){
     var membros = g.itens.map(function(id){ return porId[id]; }).filter(Boolean);
     if(!membros.length) return "";
-    if(!g.nome) return membros.map(item).join("");
+    if(!g.nome || state.perfil!=="total") return membros.map(item).join(""); /* perfil restrito: item solto, sem pasta */
     var temAtivo = membros.some(function(n){ return n.id===state.tab; });
     var aberto = temAtivo || navGrupoAberto(g.nome);
     return '<div class="op-grupo'+(aberto?' aberto':'')+(temAtivo?' tem-ativo':'')+'" data-grupo="'+g.nome+'">'+

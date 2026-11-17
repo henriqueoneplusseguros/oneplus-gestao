@@ -690,3 +690,13 @@ table.grid tr.op-linha-atual td { background: var(--vital-bg); font-weight: 700;
 .op-grupo-itens .navitem { height: 34px; }
 .btn-logout { border-radius: 999px; }
 .notif-bell { border-radius: 50%; }
+
+/* Marca centralizada e maior + bordão (nov/2026) */
+.brand { justify-content: center; text-align: center; padding: 6px 4px 18px; margin-bottom: 14px; }
+.brand > div { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.brand-logo.brand-marca { height: 72px; width: 72px; }
+.brand .sub { display: block; margin: 0; font-size: 10px; line-height: 1.4; letter-spacing: .16em; text-transform: uppercase; color: var(--taupe); opacity: .95; max-width: 170px; text-wrap: balance; }
+.op-grupo-btn { font-size: 10.5px; }
+.op-grupo-itens .navitem { padding: 0 10px; gap: 9px; font-size: 13px; white-space: nowrap; }
+.op-grupo-itens .navitem span { overflow: hidden; text-overflow: ellipsis; }
+.op-grupo-itens > div { margin-left: 14px; padding-left: 6px; }
